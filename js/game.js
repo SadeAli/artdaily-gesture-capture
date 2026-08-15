@@ -462,6 +462,9 @@
   var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0, teachUntil = 0;
   var pendingFit = 0, pendingHadStroke = false;
   var starTimer = null;
+  /* the round's reported result, banked the moment the second pose is
+     rated — finishRound() is presentation only (see the star handler) */
+  var roundResult = null;
 
   /* Plain English first, the term second — and the term is taught by
      the canvas (round 1 pose 1 shows the line before asking for it),
@@ -494,9 +497,12 @@
   function newRound() {
     clearTimeout(starTimer);
     stopLoop();
+    /* a round whose second pose was rated but whose 380ms hand-off is
+       still pending was already banked at that click — nothing to flush */
     round += 1;
     poseIdx = 0;
     poseScores = [];
+    roundResult = null;
     ratePanel.hidden = true;
     litTo(0);
     hudRound.textContent = String(round);
@@ -575,6 +581,16 @@
       litTo(idx + 1);
       var ps = poseScore(pendingFit, starScore(idx + 1));
       poseScores.push(ps);
+      if (poseIdx > 0) {
+        /* both poses are in — the round is complete NOW, so it is banked
+           here rather than 380ms later: "new round" (which clears the
+           timer below) or the embed dialog closing inside that window
+           used to throw two drawn poses away. finishRound() is
+           presentation only; this is the single report site. */
+        roundResult = ArtDaily.report(roundMean(poseScores));
+        hudScore.textContent = String(roundResult.score);
+        hudBest.textContent = roundResult.best === null ? '–' : String(roundResult.best);
+      }
       clearTimeout(starTimer);
       starTimer = setTimeout(function () {
         ratePanel.hidden = true;
@@ -591,17 +607,22 @@
   });
   rateStars.addEventListener('pointerleave', function () { if (state === 'rate') litTo(0); });
 
+  /* Presentation only: the star click already reported the round the
+     instant the second pose was rated, so every completed round reaches
+     ArtDaily.report exactly once — even if this never runs. */
   function finishRound() {
     state = 'done';
-    var res = ArtDaily.report(roundMean(poseScores));
-    hudScore.textContent = String(res.score);
-    hudBest.textContent = res.best === null ? '–' : String(res.best);
+    var res = roundResult;
     /* The strip is the reason to come back tomorrow, and it used to be a
        silent section below the fold. Name it every time it grows. */
     var kept = loadArchive().length;
     hint.textContent = 'round done — ' + (kept === 1 ? '1 gesture' : kept + ' gestures') +
       ' saved in your strip below. press "new round" for two more poses.';
-    showToast((res.isNewBest ? 'new best! ' : 'score ') + res.score + ' / 100', res.isNewBest);
+    if (res) {
+      hudScore.textContent = String(res.score);
+      hudBest.textContent = res.best === null ? '–' : String(res.best);
+      showToast((res.isNewBest ? 'new best! ' : 'score ') + res.score + ' / 100', res.isNewBest);
+    }
     draw();
   }
 

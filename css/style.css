@@ -397,6 +397,28 @@ a { color: inherit; }
   line-height: 1.25;
 }
 
+/* Shown by the SDK when a drill is played on its own page: progress
+   lives per-origin, so a standalone score needs a way home. */
+.handoff {
+  margin: 12px 0 0;
+  padding: 9px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px dashed color-mix(in srgb, var(--game-accent) 55%, var(--line));
+  border-radius: 5px 12px 6px 11px;
+  background: color-mix(in srgb, var(--game-accent) 8%, transparent);
+}
+.handoff-link {
+  font-family: var(--hand);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--game-accent) 55%, var(--ink));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+:root[data-theme="dark"] .handoff-link { color: var(--game-accent); }
+
 /* ============================================================
    game-specific styles below this line
    ============================================================ */

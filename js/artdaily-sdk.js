@@ -18,6 +18,8 @@
      game → page  {type:'artdaily:ready',  slug, version:1}
      game → page  {type:'artdaily:result', slug, version:1, score}
      page → game  {type:'artdaily:theme',  theme:'dark'|'light'}
+     page → game  {type:'artdaily:logged', slug, version:1, score}
+                  (receipt for a standalone hand-off; see below)
    ============================================================ */
 window.ArtDaily = (function () {
   'use strict';
@@ -106,16 +108,45 @@ window.ArtDaily = (function () {
 
   function setMode(m) {
     if (!m || m === mode) return;
+    var was = profile();
     mode = m;
     try { localStorage.setItem('artdaily-input', m); } catch (e) {}
     paintModeChip();
+    /* Only notify when the numbers a drill can actually SEE have moved.
+       The very first press of a session takes mode null → 'mouse', but
+       profile() already answered PROFILE.mouse before it, so nothing about
+       the scoring changed. Drills rebuild their geometry in this callback
+       — steady-tunnel regenerates the corridor — and this listener runs in
+       the capture phase, i.e. BEFORE the canvas sees that same press. A
+       no-op transition must never move the target under the player's hand
+       on the first stroke they draw. */
+    if (profile() === was) return;
     modeListeners.forEach(function (fn) { try { fn(m); } catch (e) {} });
+  }
+
+  /* A pen outranks a finger, exactly as every drill's own palm guard
+     does (PEN_LOCKOUT_MS). Artists rest the palm on the glass mid-
+     stroke; the drill refuses to draw with that contact, so it must not
+     re-tune the scoring either — a stray palm used to flip the profile
+     to 'touch' (ease 1.5) and score the pen's stroke, and every later
+     one, against the finger's tolerance. */
+  var PEN_LOCKOUT_MS = 700;   /* the drills' own palm guard uses this */
+  var lastPenAt = -1e9;
+
+  function notePen(ev) {
+    /* pointermove keeps this fresh for the whole stroke (and while the
+       nib hovers), so a palm landing mid-stroke is always inside the
+       lockout — no pointerup needed, nothing to leak if one is lost. */
+    if (ev.pointerType === 'pen') lastPenAt = ev.timeStamp || 0;
   }
 
   /* Capture phase so a drill's own handler cannot stop us seeing it. */
   window.addEventListener('pointerdown', function (ev) {
+    notePen(ev);
+    if (ev.pointerType === 'touch' && (ev.timeStamp || 0) - lastPenAt < PEN_LOCKOUT_MS) return;
     setMode(ev.pointerType === 'pen' ? 'pen' : ev.pointerType === 'touch' ? 'touch' : 'mouse');
   }, true);
+  window.addEventListener('pointermove', notePen, true);
 
   (function bootMode() {
     var saved = null;
@@ -128,6 +159,96 @@ window.ArtDaily = (function () {
           !matchMedia('(any-hover: hover)').matches) mode = 'touch';
     } catch (e) {}
   })();
+
+  /* ============================================================
+     STANDALONE HAND-OFF
+
+     Progress lives in localStorage, which is per-origin: the page is
+     artdaily.sadeali.com but a drill played on its own runs on its own
+     host, so a score earned there can never reach the record on its
+     own. (A hidden cross-origin iframe used to bridge this; browsers
+     now partition that storage, so it silently would not work.)
+
+     Two honest routes instead:
+       1. If this tab was opened FROM the page, its window.opener is the
+          page — post the result straight to it and it lands live. It
+          replies {type:'artdaily:logged'}: posting is NOT delivering,
+          because a postMessage whose targetOrigin no longer matches
+          (the opener tab navigated away from HOME) is dropped silently,
+          with no throw to catch. Claiming "sent ✓" off a bare
+          window.opener check loses the score for good.
+       2. Until that receipt arrives — and forever, if there is no opener
+          at all — offer a link carrying the score back. One tap, and the
+          page records it. Injected here so all drills get it without
+          each one needing its own button.
+     ============================================================ */
+
+  var HOME = 'https://artdaily.sadeali.com';
+
+  function logUrl(score) {
+    return HOME + '/#log=' + encodeURIComponent(slug) + ',' + score;
+  }
+
+  /* The best of THIS sitting. The bar is rewritten by every round, so
+     handing over the round just played meant a player who did 41, 92,
+     then a tired 38 could only ever log the 38. (Not the all-time best
+     from readBest(): that may have been earned on another day, and the
+     page would file it under today.) */
+  var sessionBest = null;
+  var lastRound = 0;
+  var ackHooked = false;
+
+  function handOffStandalone(round) {
+    lastRound = round;
+    if (sessionBest === null || round > sessionBest) sessionBest = round;
+    /* Hook the receipt first and paint the link second, so neither can
+       be clobbered by an acknowledgement that arrives in between. */
+    if (!ackHooked) {
+      ackHooked = true;
+      window.addEventListener('message', function (ev) {
+        if (ev.origin !== HOME) return;
+        var d = ev.data;
+        if (!d || d.type !== 'artdaily:logged' || d.slug !== slug) return;
+        showHandOff(lastRound, sessionBest, true);
+      });
+    }
+    showHandOff(round, sessionBest, false);
+    /* The post carries THIS round, not the session best: over an opener
+       every round is posted as it happens and the page keeps the best of
+       the day already. Only the link needs the best, because it is one
+       click that has to stand for the whole sitting. */
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(
+          { type: 'artdaily:result', slug: slug, version: VERSION, score: round }, HOME);
+      }
+    } catch (e) {}
+  }
+
+  function showHandOff(round, best, delivered) {
+    var bar = document.getElementById('artdailyHandoff');
+    if (!bar) {
+      bar = document.createElement('p');
+      bar.id = 'artdailyHandoff';
+      bar.className = 'handoff';
+      var host = document.querySelector('.game-controls') || document.querySelector('.game-body');
+      if (!host) return;
+      host.parentNode.insertBefore(bar, host.nextSibling);
+    }
+    bar.textContent = '';
+    if (delivered) {
+      bar.appendChild(document.createTextNode('sent to your Art Daily record ✓'));
+      return;
+    }
+    bar.appendChild(document.createTextNode(best > round
+      ? 'scored ' + round + ' · best this session ' + best + ' — '
+      : 'scored ' + round + ' — '));
+    var a = document.createElement('a');
+    a.className = 'handoff-link';
+    a.href = logUrl(best);
+    a.textContent = 'add it to my Art Daily record →';
+    bar.appendChild(a);
+  }
 
   function bestKey() { return 'artdaily-best-' + slug; }
 
@@ -182,6 +303,7 @@ window.ArtDaily = (function () {
         try { localStorage.setItem(bestKey(), String(s)); } catch (e) {}
       }
       post({ type: 'artdaily:result', slug: slug, version: VERSION, score: s });
+      if (!embedded) handOffStandalone(s);
       return { score: s, best: isNewBest ? s : prev, isNewBest: isNewBest };
     },
 
