@@ -147,7 +147,18 @@ window.ArtDaily = (function () {
   var pointersDown = 0;
 
   function setMode(m) {
-    if (!m || m === mode) return;
+    if (!m) return;
+    /* The newest press is the last word on what the hand is holding, so it
+       also CANCELS a queue that contradicts it. Returning early here instead
+       left a switch queued by a gesture whose release was never seen, and the
+       next release — of a gesture made with the CURRENT hardware — applied it:
+       press on the canvas, drag off the iframe, let go over the page, and the
+       drill never gets that pointerup (the counter only self-heals on the next
+       press). The trackpad round after that was then scored under the pen's
+       ease, halving the zero-point on a stroke drawn with a mouse, and the HUD
+       chip said "scoring for pen" while a trackpad was in use. It corrected
+       itself one press later, which is one whole round too late. */
+    if (m === mode) { pendingMode = null; return; }
     if (PROFILE[m] === profile()) { applyMode(m); return; }
     pendingMode = m;
   }
