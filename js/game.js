@@ -151,15 +151,46 @@
      Scoring only the LONGEST stroke silently threw away everything a
      short-throw trackpad was forced to split, and charged for the miss
      it had just deleted: a sweep drawn in two halves read as half a
-     sweep, with nothing on screen saying so. */
-  function chamferAll(strokes, truth, n) {
-    if (!strokes || !strokes.length || !truth || truth.length < 2) return Infinity;
+     sweep, with nothing on screen saying so.
+
+     Both directions are RETURNED, not just the max, because they are
+     two different mistakes and "you followed it 62%" cannot tell them
+     apart: inkToLine high means the stroke wandered off the line,
+     lineToInk high means most of the line was never swept at all. The
+     score still uses only the worse of them, exactly as before. */
+  function chamferParts(strokes, truth, n) {
+    var none = { inkToLine: Infinity, lineToInk: Infinity, worst: Infinity };
+    if (!strokes || !strokes.length || !truth || truth.length < 2) return none;
     var ink = samplePlayer(strokes, n);
-    if (!ink.length) return Infinity;
+    if (!ink.length) return none;
     var truthPts = resample(truth, n);
     var sumB = 0, i;
     for (i = 0; i < truthPts.length; i++) sumB += distToStrokes(truthPts[i], strokes);
-    return Math.max(meanDistToPath(ink, truthPts), sumB / truthPts.length);
+    var a = meanDistToPath(ink, truthPts), b = sumB / truthPts.length;
+    return { inkToLine: a, lineToInk: b, worst: Math.max(a, b) };
+  }
+
+  function chamferAll(strokes, truth, n) {
+    return chamferParts(strokes, truth, n).worst;
+  }
+
+  /* The delta, in words. The fit percentage is a magnitude with no
+     direction — a beginner reading "48%" cannot tell whether they drew
+     the wrong curve or simply drew a third of the right one. */
+  function fitVerdict(parts, fit) {
+    if (!parts || !isFinite(parts.worst)) return 'nothing landed on the line.';
+    if (fit >= 85) return 'you rode it the whole way.';
+    if (parts.lineToInk > parts.inkToLine * 1.25) {
+      return 'you caught part of it — the line runs further than your stroke did.';
+    }
+    if (parts.inkToLine > parts.lineToInk * 1.25) {
+      return 'your stroke wandered off it — one flowing curve, not the body’s outline.';
+    }
+    /* Both directions equally bad AND both large is not "the right shape
+       slightly misplaced" — a stroke drawn somewhere else entirely lands
+       here, and praising its shape contradicts the number beside it. */
+    if (fit < 25) return 'that is a different line — start at the head and sweep down through the hips.';
+    return 'the right shape, sitting off the line — start at the head and commit.';
   }
 
   /* Tolerance scales with the pose — the first 1.2% is free so a careful
@@ -175,7 +206,15 @@
     return 100 * clamp01(1 - Math.max(0, chamferDist - free) / span);
   }
 
-  function starScore(stars) { return 20 * Math.max(0, Math.min(5, stars)); }
+  /* Math.min(5, NaN) is NaN and Math.max(0, NaN) is NaN, so an unguarded
+     rating would carry NaN into poseScore and out through report(). The
+     star buttons can only ever hand this 1–5, but a scoring function has
+     to be safe on its own terms, not on its caller's. */
+  function starScore(stars) {
+    var s = Number(stars);
+    if (!isFinite(s)) return 0;
+    return 20 * Math.max(0, Math.min(5, s));
+  }
 
   function poseScore(fit, starSc) { return 0.6 * fit + 0.4 * starSc; }
 
@@ -544,8 +583,9 @@
     stopLoop();
     commitCur();
     pendingHadStroke = strokes.length > 0;
+    var parts = pendingHadStroke ? chamferParts(strokes, pose.sweep, RESAMPLE_N) : null;
     pendingFit = pendingHadStroke
-      ? Math.round(fitScore(chamferAll(strokes, pose.sweep, RESAMPLE_N), pose.size,
+      ? Math.round(fitScore(parts.worst, pose.size,
           ArtDaily.ease(FREE_FLOOR_PX), ArtDaily.ease(SPAN_FLOOR_PX)))
       : 0;
     if (!pendingHadStroke) {
@@ -564,8 +604,12 @@
     }
     state = 'rate';
     saveThumb(pendingFit);
-    hint.textContent = 'the coloured line is the pose’s true line of action — your line followed it ' +
-      pendingFit + '% of the way (all your strokes count). now say how it felt.';
+    /* the percentage is the magnitude; the verdict is the direction.
+       Without it "48%" leaves the player guessing whether they drew the
+       wrong curve or a third of the right one. */
+    hint.textContent = 'the coloured line is the pose’s true line of action. you followed it ' +
+      pendingFit + '% of the way (all your strokes count) — ' + fitVerdict(parts, pendingFit) +
+      ' now say how it felt.';
     ratePanel.hidden = false;
     draw();
     var first = rateStars.querySelector('.star');
