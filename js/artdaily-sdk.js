@@ -184,20 +184,39 @@ window.ArtDaily = (function () {
   var GESTURE_IDLE_MS = 2000;
   var lastPointerAt = -1e9;
 
-  /* Capture phase so a drill's own handler cannot stop us seeing it. */
+  /* Capture phase so a drill's own handler cannot stop us seeing it, and
+     PASSIVE because none of these handlers ever calls preventDefault. A
+     non-passive window-level pointer listener puts every gesture anywhere
+     on the page — including a plain scroll past the drill — through a
+     blocking hit-test before the compositor may move a pixel, and this
+     file is loaded on every drill in the arcade. `passive` is per-listener,
+     so a drill's own non-passive canvas handler still cancels what it likes.
+     An engine too old to read the options object sees a truthy value and
+     reads it as `capture: true`, which is what it used to be told. */
+  var SNIFF = { capture: true, passive: true };
+
   window.addEventListener('pointerdown', function (ev) {
     var t = ev.timeStamp || 0;
-    if (t - lastPointerAt > GESTURE_IDLE_MS) pointersDown = 0;
-    lastPointerAt = t;
     /* First contact of a fresh gesture: anything still queued was queued
        by a gesture that has already ended, so it is safe to apply now.
-       A second finger joining a live gesture must NOT trigger this. */
+       A second finger joining a live gesture must NOT trigger this — and
+       the counter is read BEFORE the idle reset below repairs it, because
+       a repaired counter is a GUESS. A stroke that pauses emits no move
+       events (a pen resting on the tablet while the player looks up), so
+       it goes idle without ending; forcing the queued switch through on
+       the palm that lands next rebuilt the drill's geometry under a live
+       hand — the exact mid-press swing this queue exists to prevent.
+       Zero here means the previous gesture's releases actually landed.
+       When they did not, the switch waits for the next release instead of
+       jumping the queue, which is one gesture later and never mid-stroke. */
     if (!pointersDown) flushMode(true);
+    if (t - lastPointerAt > GESTURE_IDLE_MS) pointersDown = 0;
+    lastPointerAt = t;
     pointersDown += 1;      /* counted before the palm guard can return */
     notePen(ev);
     if (ev.pointerType === 'touch' && t - lastPenAt < PEN_LOCKOUT_MS) return;
     setMode(ev.pointerType === 'pen' ? 'pen' : ev.pointerType === 'touch' ? 'touch' : 'mouse');
-  }, true);
+  }, SNIFF);
 
   window.addEventListener('pointermove', function (ev) {
     notePen(ev);
@@ -205,7 +224,7 @@ window.ArtDaily = (function () {
        not: a mouse drifting over the page would otherwise hold a leaked
        counter fresh forever and the idle reset would never fire. */
     if (ev.buttons) lastPointerAt = ev.timeStamp || 0;
-  }, true);
+  }, SNIFF);
 
   function releasePointer(ev) {
     lastPointerAt = (ev && ev.timeStamp) || lastPointerAt;
@@ -214,8 +233,8 @@ window.ArtDaily = (function () {
        the stroke through ease() — has already run under the old profile. */
     if (!pointersDown && pendingMode) setTimeout(function () { flushMode(false); }, 0);
   }
-  window.addEventListener('pointerup', releasePointer, true);
-  window.addEventListener('pointercancel', releasePointer, true);
+  window.addEventListener('pointerup', releasePointer, SNIFF);
+  window.addEventListener('pointercancel', releasePointer, SNIFF);
 
   (function bootMode() {
     var saved = null;
@@ -453,6 +472,32 @@ window.ArtDaily = (function () {
       if (!(b >= 1)) b = 28;
       /* Checked after the multiply for the same reason ease() is. */
       return Math.max(1, finite(Math.round(b * profile().start), b));
+    },
+
+    /* Every position a pointermove actually carried, oldest first:
+         ArtDaily.samples(ev).forEach(function (e) { pts.push(pos(e)); });
+       A browser delivers pointermove at most once per frame, but the
+       digitizer samples far faster than that — 120–1000Hz on a pen tablet
+       — and hands the frame's whole run of positions over on the ONE event
+       it dispatches. Reading only that event throws the rest away, so a
+       fast stroke is sampled at 60Hz whatever the hardware cost: the corner
+       of a quick flick vanishes, and a drill that scores the geometry then
+       scores a straight line the player did not draw. Judging the hand by
+       the samples the browser felt like delivering is not honest scoring.
+
+       Always an array, never a throw, never empty for a real event, and
+       [ev] wherever coalescing is unavailable — so the caller needs no
+       branch of its own. (Half the drills that need this hand-rolled it
+       three different ways; this is that pattern, once.) */
+    samples: function (ev) {
+      if (!ev) return [];
+      try {
+        if (typeof ev.getCoalescedEvents === 'function') {
+          var list = ev.getCoalescedEvents();
+          if (list && list.length) return list;
+        }
+      } catch (e) {}
+      return [ev];
     },
 
     /* Fires when the hardware changes mid-session (a laptop user plugs
