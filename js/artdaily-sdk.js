@@ -427,22 +427,32 @@ window.ArtDaily = (function () {
     ease: function (base) {
       var b = finite(base, 1);
       if (b <= 0) b = 1;
-      return b * profile().ease;
+      /* The PRODUCT is checked, not just the input. A base that is large
+         but perfectly finite still overflows once the profile factor lands
+         (mouse doubles it), and an infinite zero-point is the worst possible
+         failure: 1 - err/Infinity is exactly 1, so every attempt, however
+         wild, scores a fake 100 — the same fake perfect report() exists to
+         stop, arriving through the front door instead. Falling back to the
+         unmultiplied base keeps the promise the line above makes. */
+      return finite(b * profile().ease, b);
     },
 
     /* Enlarge a start/hit zone the same way:
          var r = ArtDaily.startRadius(28);   // 48 on a pen tablet
-       Always returns a finite, HITTABLE radius. A base that arrives as 0
-       (or null, which Number() also makes 0) is treated as missing rather
-       than as "a zone one pixel across": a drill that sizes its zone off
-       the canvas — startRadius(Math.min(W, H) * 0.05) — is called once at
-       boot, before layout, while W is still 0, and a 1px target is every
-       bit as dead as a NaN one. Only the sign is folded away for a
-       negative base; a real positive base still floors at 1px. */
+       Always returns a finite, HITTABLE radius. A base BELOW ONE PIXEL is
+       treated as missing rather than as "a zone a fraction of a pixel
+       across": a drill that sizes its zone off the canvas —
+       startRadius(Math.min(W, H) * 0.05) — is called once at boot, before
+       layout, and a 1px target is every bit as dead a round as a NaN one.
+       Guarding only the exact 0 was not enough, because a canvas floors its
+       own measured width at 1px (Math.max(1, rect.width) is the standard
+       shape), so the base arrives as 0.05, not as a clean 0, and slipped
+       through. Only the sign is folded away for a negative base. */
     startRadius: function (base) {
       var b = Math.abs(finite(base, 28));
-      if (!(b > 0)) b = 28;
-      return Math.max(1, Math.round(b * profile().start));
+      if (!(b >= 1)) b = 28;
+      /* Checked after the multiply for the same reason ease() is. */
+      return Math.max(1, finite(Math.round(b * profile().start), b));
     },
 
     /* Fires when the hardware changes mid-session (a laptop user plugs
