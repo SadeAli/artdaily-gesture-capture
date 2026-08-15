@@ -29,6 +29,8 @@
   var FREE_FLOOR_PX = 3;        /* …but never tighter than the hardware's */
   var SPAN_FLOOR_PX = 40;       /*    own noise (both eased per mode)     */
   var FADE_MS = 350;            /* the pose eases down to 12%, not snaps  */
+  var HANDOFF_MS = 380;         /* beat between rating a pose and the next */
+  var EMPTY_HOLD_MS = 1800;     /* …longer when there is a missed line to study */
   var RESAMPLE_N = 56;
   var PER_SEG = 12;             /* spline samples per anchor segment */
   var ARCHIVE_KEY = 'artdaily-gesture-archive';
@@ -541,21 +543,62 @@
   function finishPose() {
     stopLoop();
     commitCur();
-    state = 'rate';
     pendingHadStroke = strokes.length > 0;
     pendingFit = pendingHadStroke
       ? Math.round(fitScore(chamferAll(strokes, pose.sweep, RESAMPLE_N), pose.size,
           ArtDaily.ease(FREE_FLOOR_PX), ArtDaily.ease(SPAN_FLOOR_PX)))
       : 0;
-    if (pendingHadStroke) saveThumb(pendingFit);
-    hint.textContent = pendingHadStroke
-      ? 'the coloured line is the pose’s true line of action — your line followed it ' + pendingFit +
-        '% of the way (all your strokes count). now say how it felt.'
-      : 'time! the coloured line was the one to catch — say how it felt.';
+    if (!pendingHadStroke) {
+      /* Nothing was drawn, so there is no gesture to rate. Asking anyway let
+         an empty sheet collect the self-rating's whole 40 points: sit out both
+         poses, click five stars twice, and the round banked 40/100 for having
+         drawn nothing at all. An empty pose is a 0, and the true line stays up
+         long enough to be worth looking at. */
+      state = 'between';
+      ratePanel.hidden = true;
+      hint.textContent = 'time — nothing landed on the sheet, so this pose scores 0. ' +
+        'the coloured curve is the line that was there to catch.';
+      draw();
+      advancePose(0, EMPTY_HOLD_MS);
+      return;
+    }
+    state = 'rate';
+    saveThumb(pendingFit);
+    hint.textContent = 'the coloured line is the pose’s true line of action — your line followed it ' +
+      pendingFit + '% of the way (all your strokes count). now say how it felt.';
     ratePanel.hidden = false;
     draw();
     var first = rateStars.querySelector('.star');
     if (first) first.focus();
+  }
+
+  /* Bank one pose and hand off to the next (or to the round's end). Shared by
+     the star click and the empty-sheet path so there is exactly one place a
+     pose score is recorded and exactly one report site. */
+  function advancePose(ps, holdMs) {
+    poseScores.push(ps);
+    if (poseIdx > 0) {
+      /* both poses are in — the round is complete NOW, so it is banked here
+         rather than after the hand-off hold: "new round" (which clears the
+         timer below) or the embed dialog closing inside that window used to
+         throw two drawn poses away. finishRound() is presentation only; this
+         is the single report site. */
+      roundResult = ArtDaily.report(roundMean(poseScores));
+      hudScore.textContent = String(roundResult.score);
+      hudBest.textContent = roundResult.best === null ? '–' : String(roundResult.best);
+    }
+    clearTimeout(starTimer);
+    starTimer = setTimeout(function () {
+      ratePanel.hidden = true;
+      litTo(0);
+      if (poseIdx === 0) {
+        showToast('pose 1 — ' + Math.round(ps), false);
+        poseIdx = 1;
+        startPose();
+      } else {
+        finishRound();
+      }
+    }, holdMs);
   }
 
   /* ---- stars ---- */
@@ -579,30 +622,7 @@
       if (state !== 'rate') return;
       state = 'between';
       litTo(idx + 1);
-      var ps = poseScore(pendingFit, starScore(idx + 1));
-      poseScores.push(ps);
-      if (poseIdx > 0) {
-        /* both poses are in — the round is complete NOW, so it is banked
-           here rather than 380ms later: "new round" (which clears the
-           timer below) or the embed dialog closing inside that window
-           used to throw two drawn poses away. finishRound() is
-           presentation only; this is the single report site. */
-        roundResult = ArtDaily.report(roundMean(poseScores));
-        hudScore.textContent = String(roundResult.score);
-        hudBest.textContent = roundResult.best === null ? '–' : String(roundResult.best);
-      }
-      clearTimeout(starTimer);
-      starTimer = setTimeout(function () {
-        ratePanel.hidden = true;
-        litTo(0);
-        if (poseIdx === 0) {
-          showToast('pose 1 — ' + Math.round(ps), false);
-          poseIdx = 1;
-          startPose();
-        } else {
-          finishRound();
-        }
-      }, 380);
+      advancePose(poseScore(pendingFit, starScore(idx + 1)), HANDOFF_MS);
     });
   });
   rateStars.addEventListener('pointerleave', function () { if (state === 'rate') litTo(0); });
@@ -883,6 +903,12 @@
   }
   canvas.addEventListener('pointercancel', cancelStroke);
   window.addEventListener('pointercancel', cancelStroke);
+  /* iOS can drop the capture with NO pointerup and NO pointercancel. Without
+     this the sweep never ends: `cur` stays live, every later press is refused
+     by the pen-takeover guard, and the pose's clock runs out on a dead sheet.
+     lostpointercapture always fires on the capturing element, and after a
+     normal pointerup it is a no-op (`cur` is already null). */
+  canvas.addEventListener('lostpointercapture', cancelStroke);
 
   /* ---- done / clear ---- */
   document.getElementById('btnDone').addEventListener('click', function () {

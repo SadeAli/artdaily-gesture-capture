@@ -97,6 +97,18 @@ window.ArtDaily = (function () {
 
   function profile() { return PROFILE[mode] || PROFILE.mouse; }
 
+  /* Every number that crosses this boundary is checked for finiteness.
+     A drill's tolerance is often computed (a fraction of a reference
+     length, a fitted radius), and a degenerate round — zero-length
+     reference, collinear points, an empty stroke — hands over NaN or
+     Infinity. Passing that through silently poisons the drill's whole
+     score: NaN loses every comparison so the score becomes NaN, and
+     report() then files it as 0 with nothing logged anywhere. */
+  function finite(v, fallback) {
+    v = Number(v);
+    return (typeof v === 'number' && isFinite(v)) ? v : fallback;
+  }
+
   /* Any drill with an #inputMode element gets the label kept current for
      free — the score is eased, so the page says what it eased for. */
   function paintModeChip() {
@@ -106,7 +118,7 @@ window.ArtDaily = (function () {
     el.hidden = false;
   }
 
-  function setMode(m) {
+  function applyMode(m) {
     if (!m || m === mode) return;
     var was = profile();
     mode = m;
@@ -115,13 +127,37 @@ window.ArtDaily = (function () {
     /* Only notify when the numbers a drill can actually SEE have moved.
        The very first press of a session takes mode null → 'mouse', but
        profile() already answered PROFILE.mouse before it, so nothing about
-       the scoring changed. Drills rebuild their geometry in this callback
-       — steady-tunnel regenerates the corridor — and this listener runs in
-       the capture phase, i.e. BEFORE the canvas sees that same press. A
-       no-op transition must never move the target under the player's hand
-       on the first stroke they draw. */
+       the scoring changed. */
     if (profile() === was) return;
     modeListeners.forEach(function (fn) { try { fn(m); } catch (e) {} });
+  }
+
+  /* A profile change may not land in the middle of a press.
+     Mode is detected on pointerdown, from a CAPTURE-phase listener — it
+     runs BEFORE the canvas sees that same press. Applying the change there
+     rebuilds the drill's geometry under the player's hand (steady-tunnel
+     regenerates its corridor in onInput), and swings startRadius between
+     the zone that was drawn and the zone that judges the hit: a saved
+     'mouse' profile meeting a newly plugged-in pen jumped a 28px start dot
+     to 48px mid-press. So a change that moves the numbers is queued and
+     applied at the release that ends the press — and after that release
+     has been dispatched, so the stroke is scored under the same ease it
+     was drawn under. A no-op transition costs nothing and applies at once. */
+  var pendingMode = null;
+  var pointersDown = 0;
+
+  function setMode(m) {
+    if (!m || m === mode) return;
+    if (PROFILE[m] === profile()) { applyMode(m); return; }
+    pendingMode = m;
+  }
+
+  function flushMode(force) {
+    if (!pendingMode) return;
+    if (!force && pointersDown > 0) return;
+    var m = pendingMode;
+    pendingMode = null;
+    applyMode(m);
   }
 
   /* A pen outranks a finger, exactly as every drill's own palm guard
@@ -140,13 +176,46 @@ window.ArtDaily = (function () {
     if (ev.pointerType === 'pen') lastPenAt = ev.timeStamp || 0;
   }
 
+  /* A release can go missing — a swallowed pointercancel, a tab hidden
+     mid-press — and would otherwise pin this counter above zero for the
+     rest of the session, freezing the queued switch forever. No real
+     gesture sits idle for two seconds, so a gap that long means whatever
+     was down is long gone. */
+  var GESTURE_IDLE_MS = 2000;
+  var lastPointerAt = -1e9;
+
   /* Capture phase so a drill's own handler cannot stop us seeing it. */
   window.addEventListener('pointerdown', function (ev) {
+    var t = ev.timeStamp || 0;
+    if (t - lastPointerAt > GESTURE_IDLE_MS) pointersDown = 0;
+    lastPointerAt = t;
+    /* First contact of a fresh gesture: anything still queued was queued
+       by a gesture that has already ended, so it is safe to apply now.
+       A second finger joining a live gesture must NOT trigger this. */
+    if (!pointersDown) flushMode(true);
+    pointersDown += 1;      /* counted before the palm guard can return */
     notePen(ev);
-    if (ev.pointerType === 'touch' && (ev.timeStamp || 0) - lastPenAt < PEN_LOCKOUT_MS) return;
+    if (ev.pointerType === 'touch' && t - lastPenAt < PEN_LOCKOUT_MS) return;
     setMode(ev.pointerType === 'pen' ? 'pen' : ev.pointerType === 'touch' ? 'touch' : 'mouse');
   }, true);
-  window.addEventListener('pointermove', notePen, true);
+
+  window.addEventListener('pointermove', function (ev) {
+    notePen(ev);
+    /* Only a move WITH contact keeps the gesture alive. Bare hover must
+       not: a mouse drifting over the page would otherwise hold a leaked
+       counter fresh forever and the idle reset would never fire. */
+    if (ev.buttons) lastPointerAt = ev.timeStamp || 0;
+  }, true);
+
+  function releasePointer(ev) {
+    lastPointerAt = (ev && ev.timeStamp) || lastPointerAt;
+    pointersDown = Math.max(0, pointersDown - 1);
+    /* Deferred one task so the drill's own release handler — which scores
+       the stroke through ease() — has already run under the old profile. */
+    if (!pointersDown && pendingMode) setTimeout(function () { flushMode(false); }, 0);
+  }
+  window.addEventListener('pointerup', releasePointer, true);
+  window.addEventListener('pointercancel', releasePointer, true);
 
   (function bootMode() {
     var saved = null;
@@ -228,11 +297,13 @@ window.ArtDaily = (function () {
   function showHandOff(round, best, delivered) {
     var bar = document.getElementById('artdailyHandoff');
     if (!bar) {
+      /* Find the host BEFORE building the bar: a drill with neither hook
+         used to leave a fresh orphan <p> behind on every single round. */
+      var host = document.querySelector('.game-controls') || document.querySelector('.game-body');
+      if (!host || !host.parentNode) return;
       bar = document.createElement('p');
       bar.id = 'artdailyHandoff';
       bar.className = 'handoff';
-      var host = document.querySelector('.game-controls') || document.querySelector('.game-body');
-      if (!host) return;
       host.parentNode.insertBefore(bar, host.nextSibling);
     }
     bar.textContent = '';
@@ -252,8 +323,17 @@ window.ArtDaily = (function () {
 
   function bestKey() { return 'artdaily-best-' + slug; }
 
+  /* Clamped on the way OUT as well as in: a best outside 0–100 can only
+     come from a corrupted or hand-edited store, and it is not harmless —
+     a stored "200" is a best no round can ever beat, so isNewBest never
+     fires again and the HUD prints "200" next to a 0–100 score. Clamping
+     is the identity on every value report() has ever written. */
   function readBest() {
-    try { var v = parseInt(localStorage.getItem(bestKey()), 10); return isNaN(v) ? null : v; } catch (e) { return null; }
+    try {
+      var v = parseInt(localStorage.getItem(bestKey()), 10);
+      if (isNaN(v)) return null;
+      return Math.max(0, Math.min(100, v));
+    } catch (e) { return null; }
   }
 
   return {
@@ -296,7 +376,12 @@ window.ArtDaily = (function () {
        personal best on the game's own origin. Returns
        { score, best, isNewBest } so the game can celebrate honestly. */
     report: function (score) {
-      var s = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+      /* Non-finite means the drill's scoring broke, not that the player was
+         perfect. Infinity used to clamp UP to 100 — a single divide-by-zero
+         in a round (a zero-length reference stroke, a degenerate fit) handed
+         out a fake perfect score, wrote it to the permanent personal best,
+         and posted it to the page as a real result. Broken scores 0. */
+      var s = Math.max(0, Math.min(100, Math.round(finite(score, 0))));
       var prev = readBest();
       var isNewBest = prev === null || s > prev;
       if (isNewBest) {
@@ -324,14 +409,21 @@ window.ArtDaily = (function () {
 
     /* Multiply the error at which YOUR score reaches zero:
          var zero = ArtDaily.ease(0.055);
-       Pen keeps the strict standard; mouse and finger get room. */
-    ease: function (base) { return (typeof base === 'number' ? base : 1) * profile().ease; },
+       Pen keeps the strict standard; mouse and finger get room.
+       Always returns a finite number > 0, so it is safe as a divisor. */
+    ease: function (base) {
+      var b = finite(base, 1);
+      if (b <= 0) b = 1;
+      return b * profile().ease;
+    },
 
     /* Enlarge a start/hit zone the same way:
-         var r = ArtDaily.startRadius(28);   // 48 on a pen tablet */
+         var r = ArtDaily.startRadius(28);   // 48 on a pen tablet
+       Always returns a finite radius >= 1px: a zone of NaN or a negative
+       radius is a target that can never be hit — a dead round. */
     startRadius: function (base) {
-      var b = typeof base === 'number' ? base : 28;
-      return Math.round(b * profile().start);
+      var b = finite(base, 28);
+      return Math.max(1, Math.round(Math.abs(b) * profile().start));
     },
 
     /* Fires when the hardware changes mid-session (a laptop user plugs
