@@ -39,7 +39,7 @@
   --hand: 'Caveat', 'Segoe Print', 'Comic Sans MS', cursive;
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 
-  --game-accent: var(--lilac);
+  --game-accent: var(--lilac); /* TODO: pick this game's accent */
 }
 
 :root[data-theme="dark"] {
@@ -383,9 +383,38 @@ a { color: inherit; }
   }
 }
 
+/* The SDK fills this when it knows the input hardware. Scores are eased
+   per device, so the drill says which device it eased for. */
+.hud-input { min-width: 0; border: 0; background: none; padding: 5px 2px; display: flex; align-items: flex-end; }
+.hud-input dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  max-width: 8.5rem;
+  line-height: 1.25;
+}
+
 /* ============================================================
    game-specific styles below this line
    ============================================================ */
+
+/* A sweep often starts with the hand parked on the sheet for a beat,
+   which on iOS is the long-press that raises the copy/share callout
+   right over the pose. touch-action: none is already set above. */
+.game-canvas {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Correcting a star rating is a quick double tap, and "new round" gets
+   the same treatment — without this that zooms the page mid-round. */
+.btn,
+.star,
+.thumb { touch-action: manipulation; }
 
 /* Comfortable touch targets for the drill's verb buttons. */
 .game-controls .btn { min-height: 44px; }

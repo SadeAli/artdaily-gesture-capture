@@ -37,12 +37,13 @@
       <div class="game-hud">
         <div class="game-id">
           <h1 class="game-name"><span class="game-emoji" aria-hidden="true">💃</span> Gesture Capture</h1>
-          <p class="game-tagline">catch the line of action before the pose fades</p>
+          <p class="game-tagline">catch the one line a pose flows along, before it fades</p>
         </div>
         <dl class="hud-stats">
           <div class="hud-stat"><dt>round</dt><dd id="hudRound">–</dd></div>
           <div class="hud-stat"><dt>score</dt><dd id="hudScore">–</dd></div>
           <div class="hud-stat"><dt>best</dt><dd id="hudBest">–</dd></div>
+                <div class="hud-stat hud-input"><dd id="inputMode" hidden></dd></div>
         </dl>
       </div>
 
@@ -52,13 +53,13 @@
         <canvas class="game-canvas" id="gameCanvas" tabindex="0" role="img" aria-label="Gesture Capture drill area"></canvas>
         <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
         <div class="rate-panel" id="ratePanel" hidden>
-          <p class="rate-q">did you catch the energy?</p>
-          <div class="rate-stars" id="rateStars" role="group" aria-label="Rate your gesture, one to five stars">
-            <button class="star" data-stars="1" aria-label="1 star">★</button>
+          <p class="rate-q">how did that feel — stiff ★ to flowing ★★★★★?</p>
+          <div class="rate-stars" id="rateStars" role="group" aria-label="How did that stroke feel, one star stiff to five stars flowing">
+            <button class="star" data-stars="1" aria-label="1 star — stiff">★</button>
             <button class="star" data-stars="2" aria-label="2 stars">★</button>
             <button class="star" data-stars="3" aria-label="3 stars">★</button>
             <button class="star" data-stars="4" aria-label="4 stars">★</button>
-            <button class="star" data-stars="5" aria-label="5 stars">★</button>
+            <button class="star" data-stars="5" aria-label="5 stars — flowing">★</button>
           </div>
         </div>
       </div>
@@ -71,9 +72,10 @@
       </div>
       <div class="howto" id="howTo" hidden>
         <p class="howto-cmd" aria-hidden="true"><span class="prompt">$</span> man gesture-capture</p>
-        <p>A mannequin strikes a pose and a ring counts down — sweep its line of action in 1–3 flowing strokes while it shows, then press done ✓ and rate your own energy.</p>
-        <p>Score is soft on purpose: 60% how closely your longest stroke hugs the true action line, 40% your stars — gesture is feel, not tracing.</p>
-        <p>Studio tip: draw the line the pose would fall along — if it toppled over, which way? One line first, whole body.</p>
+        <p>A wooden artist’s figure strikes a pose and a ring counts down. Draw the one line the whole body flows along — head, down through the hips, out along the leading arm or leg. Artists call that curve the <em>line of action</em>, and the very first pose of your first round shows it to you before asking for it.</p>
+        <p>Up to 5 strokes, in any order, then press done ✓ — every stroke you draw is scored as part of one line, so lifting to reposition (which a trackpad has to do) costs nothing.</p>
+        <p>Score is soft on purpose: 60% how closely your line followed the true one, 40% your own read of how it felt — gesture is feel, not tracing. The tolerance has a pixel floor and is eased for pen, mouse or finger; the HUD says which.</p>
+        <p>Studio tip: if the pose toppled over, which way would it fall? Draw that. One line first, whole body.</p>
         <p>Your last 12 gestures collect in the strip below. That growing sketchbook page is the real prize.</p>
       </div>
 

@@ -2,12 +2,16 @@
    game.js — Gesture Capture: a mannequin strikes a pose built
    FROM a known line of action (a C/S spline through hips, spine
    and head with volumes hung on it), a ring counts down, and the
-   player sweeps 1–3 flowing strokes catching that line while the
-   pose shows. Scoring is soft and says so: 60% geometry (chamfer
-   distance from the longest stroke to the true sweep — the pure
-   functions sit at the top, unit-testable) and 40% the player's
-   own star rating of the energy. Two poses per round; the last
-   12 gestures are kept as thumbnails — the real reward.
+   player sweeps up to 5 flowing strokes catching that line while
+   the pose shows — every one of them is scored, as one line, so a
+   short-throw trackpad is not punished for lifting. Scoring is soft
+   and says so: 60% geometry (symmetric chamfer between ALL the
+   player's strokes and the true sweep, worse direction wins, with
+   pixel floors eased per input mode — the pure functions sit at the
+   top, unit-testable) and 40% the player's own read of how the
+   stroke felt. The first pose of the first round paints the true
+   line for a beat before asking for it. Two poses per round; the
+   last 12 gestures are kept as thumbnails — the real reward.
    ============================================================ */
 (function () {
   'use strict';
@@ -15,8 +19,15 @@
   var SLUG = 'gesture-capture';
   var POSE_MS = [30000, 20000]; /* pose 1 easier + slower, pose 2 earned */
   var LAST_MS = 5000;           /* faded-pose grace before the drill locks */
-  var MAX_STROKES = 3;
+  var TEACH_MS = 1600;          /* round 1 pose 1: show the line first     */
+  /* Five, not three: the cap was invented for pens. A trackpad cannot
+     throw a 430px arc in one go and every piece is scored now. */
+  var MAX_STROKES = 5;
   var MIN_LEN = 26;             /* px of ink below this = accidental tap  */
+  var FREE_FRAC = 0.012;        /* of the pose: error that costs nothing  */
+  var SPAN_FRAC = 0.148;        /* …then this much more ramps down to 0   */
+  var FREE_FLOOR_PX = 3;        /* …but never tighter than the hardware's */
+  var SPAN_FLOOR_PX = 40;       /*    own noise (both eased per mode)     */
   var FADE_MS = 350;            /* the pose eases down to 12%, not snaps  */
   var RESAMPLE_N = 56;
   var PER_SEG = 12;             /* spline samples per anchor segment */
@@ -37,14 +48,10 @@
     return L;
   }
 
-  /* The player's longest stroke is the one that gets scored. */
-  function longestOf(strokes) {
-    var best = null, bestL = -1, i, L;
-    for (i = 0; i < strokes.length; i++) {
-      L = polyLength(strokes[i]);
-      if (L > bestL) { bestL = L; best = strokes[i]; }
-    }
-    return best;
+  function totalLength(strokes) {
+    var L = 0, i;
+    for (i = 0; i < strokes.length; i++) L += polyLength(strokes[i]);
+    return L;
   }
 
   /* Arc-length resample to ~n evenly spaced points. */
@@ -78,34 +85,91 @@
     return out;
   }
 
-  function meanMinDist(A, B) {
-    if (!A.length || !B.length) return Infinity;
-    var sum = 0, i, j, m, d;
-    for (i = 0; i < A.length; i++) {
-      m = Infinity;
-      for (j = 0; j < B.length; j++) {
-        d = dist(A[i], B[j]);
-        if (d < m) m = d;
-      }
-      sum += m;
+  function distSqToSegment(p, a, b) {
+    var vx = b.x - a.x, vy = b.y - a.y;
+    var wx = p.x - a.x, wy = p.y - a.y;
+    var len = vx * vx + vy * vy;
+    var t = len === 0 ? 0 : clamp01((wx * vx + wy * vy) / len);
+    var dx = wx - t * vx, dy = wy - t * vy;
+    return dx * dx + dy * dy;
+  }
+
+  /* Nearest distance to a polyline's SEGMENTS, not to its samples, so a
+     sparsely-sampled fast flick is not charged for its device's event
+     rate. */
+  function distToPath(p, path) {
+    if (!path || !path.length) return Infinity;
+    if (path.length === 1) return dist(p, path[0]);
+    var best = Infinity, i, d;
+    for (i = 0; i + 1 < path.length; i++) {
+      d = distSqToSegment(p, path[i], path[i + 1]);
+      if (d < best) best = d;
     }
-    return sum / A.length;
+    return Math.sqrt(best);
   }
 
-  /* Symmetric chamfer: punishes both wobble (stroke→line) and
-     missing coverage of the sweep (line→stroke). No centroid
-     alignment — the line of action lives where the pose lives. */
-  function chamfer(A, B) {
-    return (meanMinDist(A, B) + meanMinDist(B, A)) / 2;
+  /* Nearest distance to ANY of the player's strokes. The strokes stay
+     separate: joining them would invent a segment across a lift. */
+  function distToStrokes(p, strokes) {
+    var best = Infinity, s, d;
+    for (s = 0; s < strokes.length; s++) {
+      d = distToPath(p, strokes[s]);
+      if (d < best) best = d;
+    }
+    return best;
   }
 
-  /* Tolerance scales with the pose (0.16 × its size in total):
-     the first 1.2% is free so a careful tracing can reach 100,
-     and the remaining 14.8% ramps down to zero. */
-  function fitScore(chamferDist, poseSize) {
+  function meanDistToPath(pts, path) {
+    if (!pts.length) return Infinity;
+    var sum = 0, i;
+    for (i = 0; i < pts.length; i++) sum += distToPath(pts[i], path);
+    return sum / pts.length;
+  }
+
+  /* Every stroke resampled, each getting a share of the budget in
+     proportion to its length, so a long sweep outweighs a short dab. */
+  function samplePlayer(strokes, n) {
+    var total = totalLength(strokes), out = [], i, share, L;
+    if (!strokes.length) return out;
+    for (i = 0; i < strokes.length; i++) {
+      L = polyLength(strokes[i]);
+      share = total > 0 ? Math.max(2, Math.round(n * L / total)) : Math.max(2, Math.round(n / strokes.length));
+      out = out.concat(resample(strokes[i], share));
+    }
+    return out;
+  }
+
+  /* Symmetric chamfer over ALL the player's strokes: ink→line punishes
+     wobble and stray marks, line→ink punishes sweep left uncovered, and
+     the WORSE direction is the answer. Averaging them half-forgave the
+     classic cheese — scribbling over the pose zeroes the line→ink term
+     and used to score ~56 with no line at all — while an honest sweep,
+     whose error is symmetric, is unaffected. No centroid alignment: the
+     line of action lives where the pose lives.
+     Scoring only the LONGEST stroke silently threw away everything a
+     short-throw trackpad was forced to split, and charged for the miss
+     it had just deleted: a sweep drawn in two halves read as half a
+     sweep, with nothing on screen saying so. */
+  function chamferAll(strokes, truth, n) {
+    if (!strokes || !strokes.length || !truth || truth.length < 2) return Infinity;
+    var ink = samplePlayer(strokes, n);
+    if (!ink.length) return Infinity;
+    var truthPts = resample(truth, n);
+    var sumB = 0, i;
+    for (i = 0; i < truthPts.length; i++) sumB += distToStrokes(truthPts[i], strokes);
+    return Math.max(meanDistToPath(ink, truthPts), sumB / truthPts.length);
+  }
+
+  /* Tolerance scales with the pose — the first 1.2% is free so a careful
+     tracing can reach 100 and the next 14.8% ramps to zero — but both
+     terms have a pixel floor, eased per input mode by the caller: on a
+     phone the pose is ~158px, which made the free zone 1.9px and the
+     whole ramp 23px wide. That is inside a fingertip's own noise. */
+  function fitScore(chamferDist, poseSize, freeFloorPx, spanFloorPx) {
     if (!(poseSize > 0) || !isFinite(chamferDist)) return 0;
-    var free = 0.012 * poseSize;
-    var span = 0.148 * poseSize;
+    var free = Math.max(FREE_FRAC * poseSize, freeFloorPx || 0);
+    var span = Math.max(SPAN_FRAC * poseSize, spanFloorPx || 0);
+    if (!(span > 0)) return 0;
     return 100 * clamp01(1 - Math.max(0, chamferDist - free) / span);
   }
 
@@ -392,23 +456,37 @@
   }
 
   /* ---- round state ---- */
-  var state = 'done';   /* 'show' | 'last' | 'rate' | 'between' | 'done' */
+  var state = 'done';   /* 'teach' | 'show' | 'last' | 'rate' | 'between' | 'done' */
   var round = 0, poseIdx = 0, poseScores = [], pose = null;
-  var strokes = [], cur = null, activePtr = null;
-  var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0;
+  var strokes = [], cur = null, activePtr = null, activeType = '';
+  var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0, teachUntil = 0;
   var pendingFit = 0, pendingHadStroke = false;
   var starTimer = null;
+
+  /* Plain English first, the term second — and the term is taught by
+     the canvas (round 1 pose 1 shows the line before asking for it),
+     not by a word the player is expected to already own. */
+  function poseHint() {
+    return poseIdx === 0
+      ? 'pose 1 of 2 — draw the one line the whole body flows along, head down through the hips to the far foot. up to 5 strokes, then done ✓.'
+      : 'pose 2 of 2 — quicker now: catch that flowing line before the pose fades.';
+  }
 
   function startPose() {
     pose = buildPose(poseIdx, W, H);
     strokes = [];
     cur = null;
     activePtr = null;
-    state = 'show';
-    deadline = Date.now() + POSE_MS[poseIdx];
-    hint.textContent = poseIdx === 0
-      ? 'pose 1 of 2 — draw its line of action: 1–3 sweeping strokes, then done ✓.'
-      : 'pose 2 of 2 — quicker now: catch the sweep before it fades.';
+    activeType = '';
+    /* first pose a player ever sees: show the answer for a beat. The
+       term used to be charged for 30 seconds before it was explained. */
+    var teach = round === 1 && poseIdx === 0;
+    teachUntil = teach ? Date.now() + TEACH_MS : 0;
+    state = teach ? 'teach' : 'show';
+    deadline = Date.now() + (teach ? TEACH_MS : 0) + POSE_MS[poseIdx];
+    hint.textContent = teach
+      ? 'watch: that coloured curve is the pose’s line of action — the single line the whole body flows along. it goes away in a moment, then you draw it.'
+      : poseHint();
     draw();
     startLoop();
   }
@@ -429,8 +507,17 @@
   /* ---- countdown loop ---- */
   function loop() {
     rafId = 0;
-    if (state !== 'show' && state !== 'last') return;
+    if (state !== 'teach' && state !== 'show' && state !== 'last') return;
     var now = Date.now();
+    if (state === 'teach') {
+      if (now >= teachUntil) {
+        state = 'show';
+        hint.textContent = poseHint();
+      }
+      draw();
+      rafId = requestAnimationFrame(loop);
+      return;
+    }
     if (state === 'show' && now >= deadline) {
       state = 'last';
       fadeAt = now;
@@ -449,15 +536,16 @@
     stopLoop();
     commitCur();
     state = 'rate';
-    var L = longestOf(strokes);
-    pendingHadStroke = !!L;
-    pendingFit = L
-      ? Math.round(fitScore(chamfer(resample(L, RESAMPLE_N), resample(pose.sweep, RESAMPLE_N)), pose.size))
+    pendingHadStroke = strokes.length > 0;
+    pendingFit = pendingHadStroke
+      ? Math.round(fitScore(chamferAll(strokes, pose.sweep, RESAMPLE_N), pose.size,
+          ArtDaily.ease(FREE_FLOOR_PX), ArtDaily.ease(SPAN_FLOOR_PX)))
       : 0;
-    if (L) saveThumb(pendingFit);
+    if (pendingHadStroke) saveThumb(pendingFit);
     hint.textContent = pendingHadStroke
-      ? 'the lilac line is the true sweep — fit ' + pendingFit + '%. now rate the energy.'
-      : 'time! the lilac line was the sweep — rate what you caught.';
+      ? 'the coloured line is the pose’s true line of action — your line followed it ' + pendingFit +
+        '% of the way (all your strokes count). now say how it felt.'
+      : 'time! the coloured line was the one to catch — say how it felt.';
     ratePanel.hidden = false;
     draw();
     var first = rateStars.querySelector('.star');
@@ -508,7 +596,11 @@
     var res = ArtDaily.report(roundMean(poseScores));
     hudScore.textContent = String(res.score);
     hudBest.textContent = res.best === null ? '–' : String(res.best);
-    hint.textContent = 'round done — press "new round" for two more poses.';
+    /* The strip is the reason to come back tomorrow, and it used to be a
+       silent section below the fold. Name it every time it grows. */
+    var kept = loadArchive().length;
+    hint.textContent = 'round done — ' + (kept === 1 ? '1 gesture' : kept + ' gestures') +
+      ' saved in your strip below. press "new round" for two more poses.';
     showToast((res.isNewBest ? 'new best! ' : 'score ') + res.score + ' / 100', res.isNewBest);
     draw();
   }
@@ -635,7 +727,8 @@
 
   function paintFitChip(g, c) {
     if (!pose) return;
-    var label = 'fit ' + pendingFit + '%';
+    /* "fit 62%" said nothing — fit to what, and is 62 good? */
+    var label = 'you followed it ' + pendingFit + '%';
     var x = Math.max(40, Math.min(W - 44, pose.cx));
     var y = Math.max(20, pose.top - 8);
     g.save();
@@ -659,7 +752,7 @@
     /* after the countdown the pose FADES to 12% — faint, not gone;
        the rAF loop is live during 'last', so this eases over FADE_MS */
     var mAlpha = 0.12;
-    if (state === 'show') {
+    if (state === 'show' || state === 'teach') {
       mAlpha = 0.9;
     } else if (state === 'last') {
       var ft = clamp01((Date.now() - fadeAt) / FADE_MS);
@@ -667,6 +760,8 @@
     }
     paintMannequin(ctx, c, mAlpha);
     if (reveal) paintSweep(ctx, c, 0.9);
+    /* the teaching beat: the line is named on screen before it is asked for */
+    else if (state === 'teach') paintSweep(ctx, c, 0.55);
     paintStrokes(ctx, c);
     if (state === 'show' || state === 'last') paintRing(ctx, c);
     if (reveal) paintFitChip(ctx, c);
@@ -676,6 +771,27 @@
   function pointerPos(ev) {
     var rect = canvas.getBoundingClientRect();
     return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  }
+
+  /* This drill is about fast flicks, so it is the one most damaged by
+     dispatch-rate decimation — take every coalesced sample. */
+  function pushSamples(ev, arr) {
+    var list = null;
+    try { list = ev.getCoalescedEvents ? ev.getCoalescedEvents() : null; } catch (e) { list = null; }
+    if (list && list.length) {
+      for (var i = 0; i < list.length; i++) arr.push(pointerPos(list[i]));
+      return;
+    }
+    arr.push(pointerPos(ev));
+  }
+
+  /* Palm rejection: a palm landing before the nib used to own the whole
+     sweep while the clock ran down. A pen takes it back. */
+  var penAt = -Infinity, PEN_GUARD_MS = 900;
+  function claimAllowed(ev) {
+    if (ev.pointerType === 'pen') { penAt = performance.now(); return true; }
+    if (ev.pointerType === 'touch' && performance.now() - penAt < PEN_GUARD_MS) return false;
+    return true;
   }
 
   function commitCur() {
@@ -688,17 +804,25 @@
     } /* else: accidental tap — vanishes, no penalty */
     cur = null;
     activePtr = null;
+    activeType = '';
   }
 
   canvas.addEventListener('pointerdown', function (ev) {
     if (state !== 'show' && state !== 'last') return;
-    if (cur) return; /* one pointer draws at a time */
+    if (!claimAllowed(ev)) return;
+    if (cur) {
+      /* one pointer draws at a time — unless a pen arrives, in which
+         case the palm's drift is discarded and the nib takes over */
+      if (ev.pointerType !== 'pen' || activeType === 'pen') return;
+      cur = null;
+    }
     ev.preventDefault();
     if (strokes.length >= MAX_STROKES) {
-      hint.textContent = 'three strokes is the drill — press done ✓ (or clear and re-sweep).';
+      hint.textContent = 'that is ' + MAX_STROKES + ' strokes — press done ✓ (or clear and re-sweep).';
       return;
     }
     activePtr = ev.pointerId;
+    activeType = ev.pointerType || '';
     cur = [pointerPos(ev)];
     try { canvas.setPointerCapture(ev.pointerId); } catch (e) {}
     draw();
@@ -707,7 +831,7 @@
   canvas.addEventListener('pointermove', function (ev) {
     if (!cur || ev.pointerId !== activePtr) return;
     ev.preventDefault();
-    cur.push(pointerPos(ev));
+    pushSamples(ev, cur);
     if (state !== 'show' && state !== 'last') draw();
   });
 
@@ -715,26 +839,36 @@
     if (!cur || ev.pointerId !== activePtr) return;
     ev.preventDefault();
     commitCur();
+    /* Say the two things a beginner cannot see: every stroke counts,
+       and the clock is a ceiling rather than a target. */
+    if (state === 'show' && strokes.length) {
+      hint.textContent = strokes.length > 1
+        ? 'all ' + strokes.length + ' strokes count as one line — press done ✓ whenever you have it.'
+        : 'press done ✓ whenever you have it — the clock is a ceiling, not a target. lifting is free.';
+    }
     draw();
   }
   canvas.addEventListener('pointerup', endStroke);
   /* fallback if pointer capture failed and the release lands off-canvas */
   window.addEventListener('pointerup', endStroke);
 
-  canvas.addEventListener('pointercancel', function (ev) {
+  function cancelStroke(ev) {
     if (!cur || ev.pointerId !== activePtr) return;
     /* interrupted stroke (system gesture etc.) — dropped, no penalty */
     cur = null;
     activePtr = null;
+    activeType = '';
     draw();
-  });
+  }
+  canvas.addEventListener('pointercancel', cancelStroke);
+  window.addEventListener('pointercancel', cancelStroke);
 
   /* ---- done / clear ---- */
   document.getElementById('btnDone').addEventListener('click', function () {
     if (state !== 'show' && state !== 'last') return;
     commitCur();
     if (!strokes.length) {
-      hint.textContent = 'draw the sweep first — one flowing line, head through hips.';
+      hint.textContent = 'draw the line first — one flowing curve, head down through the hips.';
       return;
     }
     finishPose();
@@ -745,6 +879,7 @@
     strokes = [];
     cur = null;
     activePtr = null;
+    activeType = '';
     hint.textContent = 'cleared — same pose, fresh line.';
     draw();
   });
@@ -804,7 +939,8 @@
   function openViewer(item, opener) {
     lastThumbOpener = opener || null;
     viewerImg.src = item.img;
-    viewerCap.textContent = 'fit ' + item.fit + '% — lilac is the pose’s true sweep';
+    viewerCap.textContent = 'your line followed the pose’s line of action ' + item.fit +
+      '% of the way — the coloured curve is that line';
     viewer.hidden = false;
     viewerClose.focus();
   }
@@ -845,6 +981,10 @@
   });
 
   ArtDaily.onTheme(draw);
+
+  /* Hardware swapped mid-session — the eased floors are read at scoring
+     time, so the sheet just needs a repaint. */
+  ArtDaily.onInput(function () { draw(); });
 
   /* Height tracks width, so a resize is a uniform rescale — the pose,
      the strokes and the clock all survive it. */

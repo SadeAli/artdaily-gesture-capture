@@ -61,6 +61,74 @@ window.ArtDaily = (function () {
     try { window.parent.postMessage(msg, '*'); } catch (e) {}
   }
 
+  /* ============================================================
+     INPUT PROFILE (protocol v1, additive — a drill that ignores all of
+     this behaves exactly as before).
+
+     The same stroke means different things per hardware. A 15px wobble
+     over a 300px line is sloppy from a pen and excellent from a mouse,
+     which pivots at the wrist and cannot creep. Scoring every mode
+     against the pen's standard silently tells beginners on the laptop
+     they came with that they are bad at drawing — and they leave.
+
+     Scores are only ever compared against the player's own history, so
+     easing per mode is fair. The mode is shown in the drill's HUD so
+     the record stays honest, and it is detected silently from the first
+     pointer event — a beginner should never face a setup question
+     before their first drill.
+     ============================================================ */
+
+  var mode = null;                /* 'pen' | 'mouse' | 'touch' */
+  var modeListeners = [];
+
+  /* ease: multiplies the error value at which a drill's score hits zero.
+     pen = the reference. Mouse/trackpad need roughly double before an
+     honest attempt reads as an honest attempt; a finger sits between.
+     startRadius: pen needs the BIGGEST start zones despite being the
+     most precise instrument — on a screenless tablet the hand is out of
+     sight, so acquiring a small target is the hardest thing it does. */
+  var PROFILE = {
+    pen:   { ease: 1.0, start: 1.7, label: 'pen' },
+    mouse: { ease: 2.0, start: 1.0, label: 'mouse or trackpad' },
+    touch: { ease: 1.5, start: 1.6, label: 'finger' },
+  };
+
+  function profile() { return PROFILE[mode] || PROFILE.mouse; }
+
+  /* Any drill with an #inputMode element gets the label kept current for
+     free — the score is eased, so the page says what it eased for. */
+  function paintModeChip() {
+    var el = document.getElementById('inputMode');
+    if (!el) return;
+    el.textContent = 'scoring for ' + profile().label;
+    el.hidden = false;
+  }
+
+  function setMode(m) {
+    if (!m || m === mode) return;
+    mode = m;
+    try { localStorage.setItem('artdaily-input', m); } catch (e) {}
+    paintModeChip();
+    modeListeners.forEach(function (fn) { try { fn(m); } catch (e) {} });
+  }
+
+  /* Capture phase so a drill's own handler cannot stop us seeing it. */
+  window.addEventListener('pointerdown', function (ev) {
+    setMode(ev.pointerType === 'pen' ? 'pen' : ev.pointerType === 'touch' ? 'touch' : 'mouse');
+  }, true);
+
+  (function bootMode() {
+    var saved = null;
+    try { saved = localStorage.getItem('artdaily-input'); } catch (e) {}
+    if (saved === 'pen' || saved === 'mouse' || saved === 'touch') { mode = saved; return; }
+    /* Before the first stroke, guess from the device rather than assume
+       a pen: a coarse pointer without hover is a finger. */
+    try {
+      if (window.matchMedia && matchMedia('(any-pointer: coarse)').matches &&
+          !matchMedia('(any-hover: hover)').matches) mode = 'touch';
+    } catch (e) {}
+  })();
+
   function bestKey() { return 'artdaily-best-' + slug; }
 
   function readBest() {
@@ -88,6 +156,8 @@ window.ArtDaily = (function () {
         /* game.css hides the standalone chrome (topbar/footer) off this. */
         document.documentElement.classList.add('embed');
       }
+
+      paintModeChip();
 
       if (embedded) {
         window.addEventListener('message', function (ev) {
@@ -120,5 +190,30 @@ window.ArtDaily = (function () {
     theme: currentTheme,
 
     onTheme: function (fn) { if (typeof fn === 'function') themeListeners.push(fn); },
+
+    /* ---- input profile (see the block above) ---- */
+
+    /* 'pen' | 'mouse' | 'touch' — null only before the very first
+       pointer event on a device we could not guess. */
+    inputMode: function () { return mode; },
+
+    /* Human label for the HUD: "scoring for: mouse or trackpad". */
+    inputLabel: function () { return profile().label; },
+
+    /* Multiply the error at which YOUR score reaches zero:
+         var zero = ArtDaily.ease(0.055);
+       Pen keeps the strict standard; mouse and finger get room. */
+    ease: function (base) { return (typeof base === 'number' ? base : 1) * profile().ease; },
+
+    /* Enlarge a start/hit zone the same way:
+         var r = ArtDaily.startRadius(28);   // 48 on a pen tablet */
+    startRadius: function (base) {
+      var b = typeof base === 'number' ? base : 28;
+      return Math.round(b * profile().start);
+    },
+
+    /* Fires when the hardware changes mid-session (a laptop user plugs
+       in a tablet, an iPad user picks up the pencil). */
+    onInput: function (fn) { if (typeof fn === 'function') modeListeners.push(fn); },
   };
 })();
