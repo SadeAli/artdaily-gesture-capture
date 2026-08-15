@@ -1,0 +1,7 @@
+Caveat — designed by Pablo Impallari.
+Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)
+
+Licensed under the SIL Open Font License, Version 1.1.
+Full license text: https://openfontlicense.org
+The font file (caveat-latin.woff2) is vendored unmodified — self-hosting
+keeps the page fast and working offline.

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gesture Capture — Art Daily</title>
+<meta name="description" content="Catch the line of action before the pose fades — a daily art drill from artdaily.sadeali.com">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Gesture Capture">
+<meta property="og:description" content="Catch the line of action before the pose fades — a daily art drill">
+<meta property="og:site_name" content="Art Daily · SadeAli">
+<meta property="og:url" content="https://sadeali.github.io/artdaily-gesture-capture/">
+<link rel="canonical" href="https://sadeali.github.io/artdaily-gesture-capture/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Gesture Capture">
+<meta name="twitter:description" content="Catch the line of action before the pose fades — a daily art drill">
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;💃&lt;/text&gt;&lt;/svg&gt;">
+<link rel="stylesheet" href="css/style.css">
+<script>
+(function(){var q=null,t=null;try{q=new URLSearchParams(location.search).get('theme');}catch(e){}try{t=localStorage.getItem('sadeali-theme');}catch(e){}var v=(q==='light'||q==='dark')?q:t;document.documentElement.dataset.theme=(v==='dark')?'dark':'light';})();
+</script>
+</head>
+<body>
+<div class="topbar">
+  <a class="backlink" href="https://artdaily.sadeali.com/">← artdaily</a>
+  <div class="topbar-spacer"></div>
+  <button class="iconbtn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme" hidden>
+    <svg class="ic-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>
+    <svg class="ic-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+</div>
+
+<main class="stage game-wide">
+  <div class="term">
+    <div class="term-bar" aria-hidden="true"><i class="dot d1"></i><i class="dot d2"></i><i class="dot d3"></i><span class="term-title">~/artdaily/gesture-capture</span></div>
+    <div class="term-body game-body">
+      <div class="game-hud">
+        <div class="game-id">
+          <h1 class="game-name"><span class="game-emoji" aria-hidden="true">💃</span> Gesture Capture</h1>
+          <p class="game-tagline">catch the line of action before the pose fades</p>
+        </div>
+        <dl class="hud-stats">
+          <div class="hud-stat"><dt>round</dt><dd id="hudRound">–</dd></div>
+          <div class="hud-stat"><dt>score</dt><dd id="hudScore">–</dd></div>
+          <div class="hud-stat"><dt>best</dt><dd id="hudBest">–</dd></div>
+        </dl>
+      </div>
+
+      <p class="hint" id="hint" aria-live="polite">Loading…</p>
+
+      <div class="game-stage">
+        <canvas class="game-canvas" id="gameCanvas" tabindex="0" role="img" aria-label="Gesture Capture drill area"></canvas>
+        <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+        <div class="rate-panel" id="ratePanel" hidden>
+          <p class="rate-q">did you catch the energy?</p>
+          <div class="rate-stars" id="rateStars" role="group" aria-label="Rate your gesture, one to five stars">
+            <button class="star" data-stars="1" aria-label="1 star">★</button>
+            <button class="star" data-stars="2" aria-label="2 stars">★</button>
+            <button class="star" data-stars="3" aria-label="3 stars">★</button>
+            <button class="star" data-stars="4" aria-label="4 stars">★</button>
+            <button class="star" data-stars="5" aria-label="5 stars">★</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="game-controls">
+        <button class="btn btn-primary" id="btnDone">done <span aria-hidden="true">✓</span></button>
+        <button class="btn" id="btnClear">clear</button>
+        <button class="btn" id="btnRound">new round <span aria-hidden="true">↻</span></button>
+        <button class="btn" id="btnHow" aria-expanded="false" aria-controls="howTo">how to play</button>
+      </div>
+      <div class="howto" id="howTo" hidden>
+        <p class="howto-cmd" aria-hidden="true"><span class="prompt">$</span> man gesture-capture</p>
+        <p>A mannequin strikes a pose and a ring counts down — sweep its line of action in 1–3 flowing strokes while it shows, then press done ✓ and rate your own energy.</p>
+        <p>Score is soft on purpose: 60% how closely your longest stroke hugs the true action line, 40% your stars — gesture is feel, not tracing.</p>
+        <p>Studio tip: draw the line the pose would fall along — if it toppled over, which way? One line first, whole body.</p>
+        <p>Your last 12 gestures collect in the strip below. That growing sketchbook page is the real prize.</p>
+      </div>
+
+      <section class="archive" id="archiveSec" hidden>
+        <h2 class="archive-title">your last gestures</h2>
+        <div class="archive-strip" id="archiveStrip"></div>
+      </section>
+
+      <noscript><p class="hint">This drill needs JavaScript — nothing else, no trackers, no accounts.</p></noscript>
+    </div>
+  </div>
+</main>
+
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Saved gesture, enlarged" hidden>
+  <div class="viewer-card">
+    <img id="viewerImg" alt="One of your saved gesture drawings over its pose skeleton">
+    <p class="viewer-cap" id="viewerCap"></p>
+    <button class="btn" id="viewerClose">close <span aria-hidden="true">✕</span></button>
+  </div>
+</div>
+
+<footer class="footer">
+  <nav class="footnav" aria-label="Site links">
+    <a href="https://artdaily.sadeali.com/">More drills</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://sadeali.com/">More experiments</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://sadeali.com/support/">Support <span class="heart-ink" aria-hidden="true">♥</span></a>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/SadeAli" rel="me noopener">GitHub</a>
+    <span id="supportLinks"></span>
+  </nav>
+  <p class="fineprint"><span aria-hidden="true"># </span>© SadeAli · free · no ads · no tracking</p>
+</footer>
+
+<script src="js/artdaily-sdk.js"></script>
+<script src="js/support-config.js"></script>
+<script src="js/main.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
