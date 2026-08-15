@@ -304,6 +304,11 @@ window.ArtDaily = (function () {
       bar = document.createElement('p');
       bar.id = 'artdailyHandoff';
       bar.className = 'handoff';
+      /* A live region, because this bar IS the reveal for a standalone
+         player: it carries the score and the only route back to the
+         record. Painted silently, a screen-reader player finished a round
+         and was told nothing at all. */
+      bar.setAttribute('role', 'status');
       host.parentNode.insertBefore(bar, host.nextSibling);
     }
     bar.textContent = '';
@@ -373,8 +378,15 @@ window.ArtDaily = (function () {
 
     /* Call once per *finished* drill with a 0–100 score. The page turns
        these into streaks and skill meters; standalone play keeps a
-       personal best on the game's own origin. Returns
-       { score, best, isNewBest } so the game can celebrate honestly. */
+       personal best on the game's own origin.
+
+       Returns { score, best, isNewBest, isFirst } so the game can
+       celebrate honestly. `isFirst` marks the very first round this drill
+       has ever recorded on this device: there is no previous best, so
+       `isNewBest` is trivially true and "new best!" becomes the first
+       thing a beginner is ever told — a celebration of nothing, fired on
+       the one round where they most need to be told what the number
+       MEANS. Drills branch on isFirst to say that instead. */
     report: function (score) {
       /* Non-finite means the drill's scoring broke, not that the player was
          perfect. Infinity used to clamp UP to 100 — a single divide-by-zero
@@ -383,13 +395,14 @@ window.ArtDaily = (function () {
          and posted it to the page as a real result. Broken scores 0. */
       var s = Math.max(0, Math.min(100, Math.round(finite(score, 0))));
       var prev = readBest();
-      var isNewBest = prev === null || s > prev;
+      var isFirst = prev === null;
+      var isNewBest = isFirst || s > prev;
       if (isNewBest) {
         try { localStorage.setItem(bestKey(), String(s)); } catch (e) {}
       }
       post({ type: 'artdaily:result', slug: slug, version: VERSION, score: s });
       if (!embedded) handOffStandalone(s);
-      return { score: s, best: isNewBest ? s : prev, isNewBest: isNewBest };
+      return { score: s, best: isNewBest ? s : prev, isNewBest: isNewBest, isFirst: isFirst };
     },
 
     best: readBest,
@@ -419,11 +432,17 @@ window.ArtDaily = (function () {
 
     /* Enlarge a start/hit zone the same way:
          var r = ArtDaily.startRadius(28);   // 48 on a pen tablet
-       Always returns a finite radius >= 1px: a zone of NaN or a negative
-       radius is a target that can never be hit — a dead round. */
+       Always returns a finite, HITTABLE radius. A base that arrives as 0
+       (or null, which Number() also makes 0) is treated as missing rather
+       than as "a zone one pixel across": a drill that sizes its zone off
+       the canvas — startRadius(Math.min(W, H) * 0.05) — is called once at
+       boot, before layout, while W is still 0, and a 1px target is every
+       bit as dead as a NaN one. Only the sign is folded away for a
+       negative base; a real positive base still floors at 1px. */
     startRadius: function (base) {
-      var b = finite(base, 28);
-      return Math.max(1, Math.round(Math.abs(b) * profile().start));
+      var b = Math.abs(finite(base, 28));
+      if (!(b > 0)) b = 28;
+      return Math.max(1, Math.round(b * profile().start));
     },
 
     /* Fires when the hardware changes mid-session (a laptop user plugs
