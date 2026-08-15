@@ -313,6 +313,18 @@ window.ArtDaily = (function () {
     } catch (e) {}
   }
 
+  /* A decorative glyph, hidden from assistive tech. "→" and "✓" are read
+     out as "rightwards arrow" and "check mark", so the one sentence a
+     standalone screen-reader player hears after a round used to end in a
+     noise word — and the link's accessible name, which is what a
+     links-list announces out of context, ended "record rightwards arrow". */
+  function glyph(ch) {
+    var s = document.createElement('span');
+    s.setAttribute('aria-hidden', 'true');
+    s.textContent = ch;
+    return s;
+  }
+
   function showHandOff(round, best, delivered) {
     var bar = document.getElementById('artdailyHandoff');
     if (!bar) {
@@ -330,19 +342,38 @@ window.ArtDaily = (function () {
       bar.setAttribute('role', 'status');
       host.parentNode.insertBefore(bar, host.nextSibling);
     }
-    bar.textContent = '';
     if (delivered) {
-      bar.appendChild(document.createTextNode('sent to your Art Daily record ✓'));
+      bar.textContent = '';
+      bar.appendChild(document.createTextNode('sent to your Art Daily record '));
+      bar.appendChild(glyph('✓'));
       return;
     }
-    bar.appendChild(document.createTextNode(best > round
-      ? 'scored ' + round + ' · best this session ' + best + ' — '
-      : 'scored ' + round + ' — '));
-    var a = document.createElement('a');
-    a.className = 'handoff-link';
+    /* The LINK NODE IS REUSED across rounds. Rebuilding the whole bar every
+       round destroyed and recreated the only control on it, and removing a
+       focused element drops focus to <body> — a keyboard player who had
+       tabbed to "add it to my record" lost their place the moment the next
+       round ended. role="status" implies aria-atomic, so the region is
+       re-announced in full either way: nothing is lost by keeping the node. */
+    var a = bar.querySelector('a.handoff-link');
+    /* querySelector reaches any descendant, and the sweep below only skips
+       DIRECT children — so a link that something else has nested would be
+       swept away and then insertBefore'd against, which throws inside
+       report(). Anything but our own direct child is rebuilt from scratch. */
+    if (a && a.parentNode !== bar) a = null;
+    if (!a) {
+      bar.textContent = '';
+      a = document.createElement('a');
+      a.className = 'handoff-link';
+      a.appendChild(document.createTextNode('add it to my Art Daily record '));
+      a.appendChild(glyph('→'));
+      bar.appendChild(a);
+    }
     a.href = logUrl(best);
-    a.textContent = 'add it to my Art Daily record →';
-    bar.appendChild(a);
+    /* Replace only what sits in front of the link. */
+    while (bar.firstChild && bar.firstChild !== a) bar.removeChild(bar.firstChild);
+    bar.insertBefore(document.createTextNode(best > round
+      ? 'scored ' + round + ' · best this session ' + best + ' — '
+      : 'scored ' + round + ' — '), a);
   }
 
   function bestKey() { return 'artdaily-best-' + slug; }
