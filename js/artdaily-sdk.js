@@ -399,9 +399,20 @@ window.ArtDaily = (function () {
     a.href = logUrl(best);
     /* Replace only what sits in front of the link. */
     while (bar.firstChild && bar.firstChild !== a) bar.removeChild(bar.firstChild);
-    bar.insertBefore(document.createTextNode(best > round
-      ? 'scored ' + round + ' · best this session ' + best + ' — '
-      : 'scored ' + round + ' — '), a);
+    /* The separator goes through glyph() like every other one in this file.
+       '·' is read out as "middle dot", and it sat bare in the middle of the
+       one sentence a standalone screen-reader player gets after a round —
+       the same defect the link's own '→' was already fixed for, two lines
+       away from the helper written to fix it. Splitting the sentence into
+       three nodes is safe: the sweep above drops EVERY leading child, so the
+       count of nodes in front of the link is never assumed to be one. */
+    if (best > round) {
+      bar.insertBefore(document.createTextNode('scored ' + round + ' '), a);
+      bar.insertBefore(glyph('·'), a);
+      bar.insertBefore(document.createTextNode(' best this session ' + best + ' — '), a);
+    } else {
+      bar.insertBefore(document.createTextNode('scored ' + round + ' — '), a);
+    }
   }
 
   function bestKey() { return 'artdaily-best-' + slug; }
