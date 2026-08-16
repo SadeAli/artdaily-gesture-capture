@@ -174,23 +174,68 @@
     return chamferParts(strokes, truth, n).worst;
   }
 
+  /* WHICH of the six things happened, decided in exactly one place.
+     fitVerdict() turns the state into the sentence the player reads and
+     roundCoach() counts the states across the round, so the line that
+     closes a round can never contradict the two that led up to it. */
+  var DIR_RATIO = 1.25;
+  var CLEAN_FIT = 85;
+  var LOST_FIT = 25;
+
+  function fitKind(parts, fit) {
+    if (!parts || !isFinite(parts.worst)) return 'none';
+    if (fit >= CLEAN_FIT) return 'clean';
+    if (parts.lineToInk > parts.inkToLine * DIR_RATIO) return 'short';
+    if (parts.inkToLine > parts.lineToInk * DIR_RATIO) return 'wandered';
+    /* Both directions equally bad AND both large is not "the right shape
+       slightly misplaced" — a stroke drawn somewhere else entirely lands
+       here, and praising its shape contradicts the number beside it. */
+    if (fit < LOST_FIT) return 'lost';
+    return 'offset';
+  }
+
+  var FIT_WORDS = {
+    none: 'nothing landed on the line.',
+    clean: 'you rode it the whole way.',
+    short: 'you caught part of it — the line runs further than your stroke did.',
+    wandered: 'your stroke wandered off it — one flowing curve, not the body’s outline.',
+    lost: 'that is a different line — start at the head and sweep down through the hips.',
+    offset: 'the right shape, sitting off the line — start at the head and commit.'
+  };
+
   /* The delta, in words. The fit percentage is a magnitude with no
      direction — a beginner reading "48%" cannot tell whether they drew
      the wrong curve or simply drew a third of the right one. */
   function fitVerdict(parts, fit) {
-    if (!parts || !isFinite(parts.worst)) return 'nothing landed on the line.';
-    if (fit >= 85) return 'you rode it the whole way.';
-    if (parts.lineToInk > parts.inkToLine * 1.25) {
-      return 'you caught part of it — the line runs further than your stroke did.';
+    return FIT_WORDS[fitKind(parts, fit)] || FIT_WORDS.none;
+  }
+
+  /* Both poses said their own piece and then the round closed on two
+     percentages and a count of saved thumbnails — so a player who stops
+     short of the far foot on BOTH poses was told so twice and never once
+     told it was the same mistake twice. One line, built from the same
+     per-pose states the two verdicts were built from. A habit is only
+     claimed when every pose in the round showed it; anything else says
+     so rather than inventing a pattern out of one occurrence. */
+  var ROUND_WORDS = {
+    short: 'both times the line ran further than your stroke did — it does not stop until the far foot.',
+    wandered: 'both times you drew round the body instead of through it — one curve, not an outline.',
+    lost: 'neither line found the pose — start at the head, sweep through the hips, out the far foot.',
+    offset: 'both lines were the right shape in the wrong place — start your sweep on the head.',
+    none: 'nothing reached the sheet either time — one fast curve is worth more here than a careful one.'
+  };
+
+  function roundCoach(kinds) {
+    var n = kinds ? kinds.length : 0, i, clean = 0, first = null, allSame = true;
+    if (!n) return '';
+    for (i = 0; i < n; i++) {
+      if (kinds[i] === 'clean') clean += 1;
+      if (first === null) first = kinds[i];
+      else if (kinds[i] !== first) allSame = false;
     }
-    if (parts.inkToLine > parts.lineToInk * 1.25) {
-      return 'your stroke wandered off it — one flowing curve, not the body’s outline.';
-    }
-    /* Both directions equally bad AND both large is not "the right shape
-       slightly misplaced" — a stroke drawn somewhere else entirely lands
-       here, and praising its shape contradicts the number beside it. */
-    if (fit < 25) return 'that is a different line — start at the head and sweep down through the hips.';
-    return 'the right shape, sitting off the line — start at the head and commit.';
+    if (clean === n) return 'you rode the line every time — next round, go faster and trust the first curve.';
+    if (allSame && ROUND_WORDS[first]) return ROUND_WORDS[first];
+    return 'no one habit across the two — the line of action is one curve: head, hips, far foot.';
   }
 
   /* Tolerance scales with the pose — the first 1.2% is free so a careful
@@ -500,11 +545,13 @@
   var state = 'done';   /* 'teach' | 'show' | 'last' | 'rate' | 'between' | 'done' */
   var round = 0, poseIdx = 0, poseScores = [], pose = null;
   /* the fit each pose earned, kept so the round can close on the two
-     numbers rather than only on a toast (see finishRound) */
-  var poseFits = [];
+     numbers rather than only on a toast (see finishRound) — and the
+     fitKind() state behind each of them, which is what the round-end
+     coaching is built from (see roundCoach) */
+  var poseFits = [], poseKinds = [];
   var strokes = [], cur = null, activePtr = null, activeType = '';
   var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0, teachUntil = 0;
-  var pendingFit = 0, pendingHadStroke = false;
+  var pendingFit = 0, pendingHadStroke = false, pendingKind = 'none';
   var starTimer = null;
   /* the round's reported result, banked the moment the second pose is
      rated — finishRound() is presentation only (see the star handler) */
@@ -547,6 +594,7 @@
     poseIdx = 0;
     poseScores = [];
     poseFits = [];
+    poseKinds = [];
     roundResult = null;
     ratePanel.hidden = true;
     litTo(0);
@@ -592,6 +640,9 @@
       ? Math.round(fitScore(parts.worst, pose.size,
           ArtDaily.ease(FREE_FLOOR_PX), ArtDaily.ease(SPAN_FLOOR_PX)))
       : 0;
+    /* the state behind the verdict, banked with the pose so the round can
+       close on the habit rather than on two bare percentages */
+    pendingKind = fitKind(parts, pendingFit);
     if (!pendingHadStroke) {
       /* Nothing was drawn, so there is no gesture to rate. Asking anyway let
          an empty sheet collect the self-rating's whole 40 points: sit out both
@@ -626,6 +677,7 @@
   function advancePose(ps, holdMs) {
     poseScores.push(ps);
     poseFits.push(pendingFit);
+    poseKinds.push(pendingKind);
     if (poseIdx > 0) {
       /* both poses are in — the round is complete NOW, so it is banked here
          rather than after the hand-off hold: "new round" (which clears the
@@ -699,7 +751,10 @@
        then only in a toast that had already timed out. Two numbers side by
        side are the only place a player can see whether the harder pose
        actually cost them anything. */
-    hint.textContent = 'round done — ' + fitsPhrase() +
+    /* …and the round's lesson, not just its exit: two separate verdicts
+       add up to one habit worth naming */
+    var coach = roundCoach(poseKinds);
+    hint.textContent = 'round done — ' + fitsPhrase() + (coach ? coach + ' ' : '') +
       (kept === 1 ? '1 gesture' : kept + ' gestures') +
       ' saved in your strip below. press "new round" for two more poses.';
     if (res) {
