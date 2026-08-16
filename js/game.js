@@ -499,6 +499,9 @@
   /* ---- round state ---- */
   var state = 'done';   /* 'teach' | 'show' | 'last' | 'rate' | 'between' | 'done' */
   var round = 0, poseIdx = 0, poseScores = [], pose = null;
+  /* the fit each pose earned, kept so the round can close on the two
+     numbers rather than only on a toast (see finishRound) */
+  var poseFits = [];
   var strokes = [], cur = null, activePtr = null, activeType = '';
   var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0, teachUntil = 0;
   var pendingFit = 0, pendingHadStroke = false;
@@ -543,6 +546,7 @@
     round += 1;
     poseIdx = 0;
     poseScores = [];
+    poseFits = [];
     roundResult = null;
     ratePanel.hidden = true;
     litTo(0);
@@ -621,6 +625,7 @@
      pose score is recorded and exactly one report site. */
   function advancePose(ps, holdMs) {
     poseScores.push(ps);
+    poseFits.push(pendingFit);
     if (poseIdx > 0) {
       /* both poses are in — the round is complete NOW, so it is banked here
          rather than after the hand-off hold: "new round" (which clears the
@@ -671,6 +676,16 @@
   });
   rateStars.addEventListener('pointerleave', function () { if (state === 'rate') litTo(0); });
 
+  /* "you followed the two lines 71% and 48% of the way — " and nothing at
+     all when the numbers are missing, so the sentence after it reads the
+     same either way. */
+  function fitsPhrase() {
+    var a = poseFits[0], b = poseFits[1];
+    if (!isFinite(a) || !isFinite(b)) return '';
+    return 'you followed the two lines ' + Math.round(a) + '% and ' + Math.round(b) +
+      '% of the way. ';
+  }
+
   /* Presentation only: the star click already reported the round the
      instant the second pose was rated, so every completed round reaches
      ArtDaily.report exactly once — even if this never runs. */
@@ -680,7 +695,12 @@
     /* The strip is the reason to come back tomorrow, and it used to be a
        silent section below the fold. Name it every time it grows. */
     var kept = loadArchive().length;
-    hint.textContent = 'round done — ' + (kept === 1 ? '1 gesture' : kept + ' gestures') +
+    /* Pose 1's fit was said once, 20-odd seconds and a whole pose ago, and
+       then only in a toast that had already timed out. Two numbers side by
+       side are the only place a player can see whether the harder pose
+       actually cost them anything. */
+    hint.textContent = 'round done — ' + fitsPhrase() +
+      (kept === 1 ? '1 gesture' : kept + ' gestures') +
       ' saved in your strip below. press "new round" for two more poses.';
     if (res) {
       hudScore.textContent = String(res.score);

@@ -296,6 +296,8 @@ window.ArtDaily = (function () {
   var sessionBest = null;
   var lastRound = 0;
   var ackHooked = false;
+  /* The bar speaks ONCE per sitting; see the note in showHandOff(). */
+  var announced = false;
 
   function handOffStandalone(round) {
     lastRound = round;
@@ -346,13 +348,28 @@ window.ArtDaily = (function () {
       bar = document.createElement('p');
       bar.id = 'artdailyHandoff';
       bar.className = 'handoff';
-      /* A live region, because this bar IS the reveal for a standalone
-         player: it carries the score and the only route back to the
-         record. Painted silently, a screen-reader player finished a round
-         and was told nothing at all. */
+      /* Live for its FIRST paint only — see the note below. Painted silently
+         from the very start, a standalone screen-reader player would never
+         learn that the route back to their record exists at all. */
       bar.setAttribute('role', 'status');
       host.parentNode.insertBefore(bar, host.nextSibling);
     }
+    /* …and quiet from the second paint on. A drill has exactly ONE spoken
+       channel, its #hint line, which carries the round's reveal — and this
+       bar is written in the SAME TICK as that line, from inside report().
+       Two polite regions written in one tick do not merge, they queue: the
+       player heard "Round done — 84 out of 100 (best 91). Most taps landed
+       low and right — aim high and left next round." and then, behind it,
+       "scored 84 — add it to my Art Daily record", every round, in every
+       drill in the arcade. The score is not news here; the drill just said
+       it in a fuller sentence. What IS news is that a route home exists,
+       and that is news exactly once. After the first paint the bar keeps
+       updating on screen and stays reachable by tab and in browse mode —
+       it simply stops interrupting to say the same number twice.
+       (The rule it was breaking is GAME_GUIDE.md's "one spoken channel",
+       which the toast in the template was already fixed to obey.) */
+    if (announced) bar.removeAttribute('role');
+    announced = true;
     if (delivered) {
       bar.textContent = '';
       bar.appendChild(document.createTextNode('sent to your Art Daily record '));
