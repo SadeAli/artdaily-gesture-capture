@@ -534,7 +534,25 @@ window.ArtDaily = (function () {
     },
 
     /* Every position a pointermove actually carried, oldest first:
-         ArtDaily.samples(ev).forEach(function (e) { pts.push(pos(e)); });
+
+         var r = canvas.getBoundingClientRect();     // ONCE — see below
+         ArtDaily.samples(ev).forEach(function (e) {
+           pts.push({ x: e.clientX - r.left, y: e.clientY - r.top });
+         });
+
+       MEASURE THE CANVAS ONCE PER EVENT, not once per sample. The usual
+       pos(ev) helper calls getBoundingClientRect() itself, so dropping it
+       straight into this loop re-measures the element on every sample —
+       and a fast pen hands over dozens per frame, all of them describing a
+       canvas that cannot have moved between them. Worse, the loop runs in
+       the same handler that repaints, so the first of those reads has to
+       flush the layout the previous frame dirtied. Hoist the rect and the
+       whole run costs one measurement. (If all you want is where the hand
+       is NOW — a drag handle, a cursor — you do not need this at all: the
+       dispatched event already carries the newest sample, it IS the last
+       entry of the run. samples() is for the SHAPE of the stroke between
+       two frames, which is the part the dispatched event throws away.)
+
        A browser delivers pointermove at most once per frame, but the
        digitizer samples far faster than that — 120–1000Hz on a pen tablet
        — and hands the frame's whole run of positions over on the ONE event
