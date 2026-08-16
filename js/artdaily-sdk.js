@@ -171,13 +171,13 @@ window.ArtDaily = (function () {
     applyMode(m);
   }
 
-  /* A pen outranks a finger, exactly as every drill's own palm guard
-     does (PEN_LOCKOUT_MS). Artists rest the palm on the glass mid-
+  /* A pen outranks a finger, on the same clock the drills' input guards
+     read through isPalm() below. Artists rest the palm on the glass mid-
      stroke; the drill refuses to draw with that contact, so it must not
      re-tune the scoring either — a stray palm used to flip the profile
      to 'touch' (ease 1.5) and score the pen's stroke, and every later
      one, against the finger's tolerance. */
-  var PEN_LOCKOUT_MS = 700;   /* the drills' own palm guard uses this */
+  var PEN_LOCKOUT_MS = 700;   /* the lockout, for the profile and for isPalm */
   var lastPenAt = -1e9;
 
   function notePen(ev) {
@@ -185,6 +185,26 @@ window.ArtDaily = (function () {
        nib hovers), so a palm landing mid-stroke is always inside the
        lockout — no pointerup needed, nothing to leak if one is lost. */
     if (ev.pointerType === 'pen') lastPenAt = ev.timeStamp || 0;
+  }
+
+  /* ONE definition of "that contact is a palm, not an attempt", shared by
+     the profile lockout below and by the drills through isPalm(). The two
+     may not disagree about what a palm is: the SDK refusing to re-tune the
+     scoring for a contact that the drill then scored is the worst of both.
+     `t` is passed in rather than read off the event, so the caller that has
+     already normalised a timestamp does not normalise it twice — and so a
+     caller with no usable clock can hand over NaN and get `false`. */
+  function isPalmAt(ev, t) {
+    if (!ev || ev.pointerType !== 'touch') return false;
+    var since = t - lastPenAt;
+    /* Bounded BELOW as well as above. A difference computed across two time
+       origins can come out negative, and NaN fails both comparisons — which
+       is the answer we want, because this predicate REFUSES A PLAYER'S
+       PRESS. A false palm silently eats a tap that was really made, and
+       that is the one failure worse than letting a palm through. Never true
+       before the pen has spoken at all: lastPenAt starts a billion ms back,
+       so a finger-only player is never once tested against a pen. */
+    return since >= 0 && since < PEN_LOCKOUT_MS;
   }
 
   /* A release can go missing — a swallowed pointercancel, a tab hidden
@@ -225,7 +245,7 @@ window.ArtDaily = (function () {
     lastPointerAt = t;
     pointersDown += 1;      /* counted before the palm guard can return */
     notePen(ev);
-    if (ev.pointerType === 'touch' && t - lastPenAt < PEN_LOCKOUT_MS) return;
+    if (isPalmAt(ev, t)) return;
     setMode(ev.pointerType === 'pen' ? 'pen' : ev.pointerType === 'touch' ? 'touch' : 'mouse');
   }, SNIFF);
 
@@ -603,6 +623,40 @@ window.ArtDaily = (function () {
         }
       } catch (e) {}
       return [ev];
+    },
+
+    /* Is this press the PALM of a hand that is holding a pen?
+
+         canvas.addEventListener('pointerdown', function (ev) {
+           if (ArtDaily.isPalm(ev)) return;   // ignored, never counted
+           …
+         });
+
+       An artist rests the heel of the hand on the glass and the nib lands a
+       moment later, so first-contact-wins hands the round to the palm: a
+       stroke drill records palm drift as the player's line, and a tap drill
+       burns an item on a contact somewhere near the wrist. Either way the
+       hand that was actually drawing is the one the drill ignored, and the
+       score that comes out is not a score of anything.
+
+       True only for a `touch` press inside PEN_LOCKOUT_MS of the last thing
+       the pen did — CONTACT OR BARE HOVER, and the hover is the half a
+       drill cannot see for itself. This file listens on `window` in the
+       CAPTURE phase, so a nib hovering anywhere on the page (or over the
+       chrome beside the canvas) has already been noted by the time the
+       drill's own handler runs; a guard fed only by the drill's own canvas
+       events goes blind the moment the nib lifts off the sheet, which is
+       exactly when the palm is still down. Thirty-three drills hand-rolled
+       this against their own events, two spellings of the constant and two
+       different clocks — this is that guard, once, off the same timestamp
+       the profile lockout above already trusts.
+
+       Total: no event, a pointerType that is not 'touch', a missing or
+       unusable timeStamp, or a session where no pen has ever spoken all
+       answer false. Refusing a press you cannot classify would eat a tap a
+       finger-only player really made. */
+    isPalm: function (ev) {
+      return isPalmAt(ev, (ev && typeof ev.timeStamp === 'number') ? ev.timeStamp : NaN);
     },
 
     /* Fires when the hardware changes mid-session (a laptop user plugs
