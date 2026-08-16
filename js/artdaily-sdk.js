@@ -417,17 +417,33 @@ window.ArtDaily = (function () {
 
   function bestKey() { return 'artdaily-best-' + slug; }
 
+  /* The sitting's best, mirrored in memory, because localStorage is not
+     always there to be used. Safari's private mode throws on setItem, and a
+     browser told to block third-party storage throws on getItem as well
+     inside a cross-origin iframe — which is the arcade's MAIN path, the
+     page's player dialog, not an exotic one.
+     With no mirror, readBest() answers null after every round, so report()
+     calls EVERY round the first one ever played: isFirst true forever,
+     isNewBest true forever, and `best` merely the round just finished. The
+     drill then prints "Round done — 20 out of 100. That is your bar now —
+     press new round and beat it." directly after an 84, with 20 standing in
+     the HUD's "best" column. Both are simply false.
+     A memory best is not a record — it dies with the tab, and the page keeps
+     the real progress on its own origin anyway — but it stops the drill
+     lying for the length of a sitting. Storage still wins whenever it
+     answers, so nothing moves for a player who has one. */
+  var memBest = null;
+
   /* Clamped on the way OUT as well as in: a best outside 0–100 can only
      come from a corrupted or hand-edited store, and it is not harmless —
      a stored "200" is a best no round can ever beat, so isNewBest never
      fires again and the HUD prints "200" next to a 0–100 score. Clamping
      is the identity on every value report() has ever written. */
   function readBest() {
-    try {
-      var v = parseInt(localStorage.getItem(bestKey()), 10);
-      if (isNaN(v)) return null;
-      return Math.max(0, Math.min(100, v));
-    } catch (e) { return null; }
+    var v = NaN;
+    try { v = parseInt(localStorage.getItem(bestKey()), 10); } catch (e) {}
+    if (isNaN(v)) return memBest;   /* nothing stored, or no store to read */
+    return Math.max(0, Math.min(100, v));
   }
 
   return {
@@ -487,6 +503,7 @@ window.ArtDaily = (function () {
       var isFirst = prev === null;
       var isNewBest = isFirst || s > prev;
       if (isNewBest) {
+        memBest = s;    /* set FIRST: the store is allowed to fail */
         try { localStorage.setItem(bestKey(), String(s)); } catch (e) {}
       }
       post({ type: 'artdaily:result', slug: slug, version: VERSION, score: s });
