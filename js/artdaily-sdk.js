@@ -163,9 +163,13 @@ window.ArtDaily = (function () {
     pendingMode = m;
   }
 
-  function flushMode(force) {
+  /* A queued switch is applied at a RELEASE and nowhere else. There is no
+     force flag: see the pointerdown listener for the press-start flush that
+     used to exist and why it could only ever fire in the one window where it
+     was wrong. */
+  function flushMode() {
     if (!pendingMode) return;
-    if (!force && pointersDown > 0) return;
+    if (pointersDown > 0) return;
     var m = pendingMode;
     pendingMode = null;
     applyMode(m);
@@ -228,19 +232,32 @@ window.ArtDaily = (function () {
 
   window.addEventListener('pointerdown', function (ev) {
     var t = ev.timeStamp || 0;
-    /* First contact of a fresh gesture: anything still queued was queued
-       by a gesture that has already ended, so it is safe to apply now.
-       A second finger joining a live gesture must NOT trigger this — and
-       the counter is read BEFORE the idle reset below repairs it, because
-       a repaired counter is a GUESS. A stroke that pauses emits no move
-       events (a pen resting on the tablet while the player looks up), so
-       it goes idle without ending; forcing the queued switch through on
-       the palm that lands next rebuilt the drill's geometry under a live
-       hand — the exact mid-press swing this queue exists to prevent.
-       Zero here means the previous gesture's releases actually landed.
-       When they did not, the switch waits for the next release instead of
-       jumping the queue, which is one gesture later and never mid-stroke. */
-    if (!pointersDown) flushMode(true);
+    /* NOTHING IS FLUSHED HERE. A press-start flush used to stand above this
+       line, on the reasoning that a counter of zero means the previous
+       gesture's releases all landed, so a queued switch belongs to a gesture
+       that is already over and is safe to apply. The premise is true and the
+       conclusion is still wrong, because this listener is on `window` in the
+       CAPTURE phase: it runs BEFORE the drill's own handler for this very
+       press. Applying there moves the drill's geometry in the gap between the
+       last frame the player could see and the moment that same press is
+       scored — a tap drill's target slides (the template pads its target by
+       the ring radius, so a mouse→pen switch walks it up to 15px across a
+       900px sheet, 17 points of score), and the ease() the stroke is judged
+       by is not the one it was drawn under. That is the mid-press swing this
+       whole queue exists to prevent, arriving through the front door.
+       And it could only ever fire in exactly that case. pendingMode is set
+       only from this listener, while pointersDown >= 1; the only route back
+       to zero with a switch still queued is releasePointer, which schedules
+       the flush itself on the next task. So "pointersDown is 0 and something
+       is still pending" IS the window between a release and its own flush —
+       a window a press can slip into whenever an input task outruns a 0ms
+       timer, which is the ordering a real scheduler prefers. Outside that
+       window the call was a no-op. No-op when it was safe, geometry-moving
+       when it fired: the honest version of it is nothing at all.
+       A switch queued by a gesture whose release never arrived is not
+       stranded by this. The idle repair below hands the counter back to zero
+       on the next press, so THAT press's release flushes — one gesture later
+       than the old line promised, and never inside one. */
     if (t - lastPointerAt > GESTURE_IDLE_MS) pointersDown = 0;
     lastPointerAt = t;
     pointersDown += 1;      /* counted before the palm guard can return */
@@ -262,7 +279,7 @@ window.ArtDaily = (function () {
     pointersDown = Math.max(0, pointersDown - 1);
     /* Deferred one task so the drill's own release handler — which scores
        the stroke through ease() — has already run under the old profile. */
-    if (!pointersDown && pendingMode) setTimeout(function () { flushMode(false); }, 0);
+    if (!pointersDown && pendingMode) setTimeout(function () { flushMode(); }, 0);
   }
   window.addEventListener('pointerup', releasePointer, SNIFF);
   window.addEventListener('pointercancel', releasePointer, SNIFF);

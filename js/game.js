@@ -553,6 +553,10 @@
   var deadline = 0, lockAt = 0, fadeAt = 0, rafId = 0, teachUntil = 0;
   var pendingFit = 0, pendingHadStroke = false, pendingKind = 'none';
   var starTimer = null;
+  /* the pending hand-off beat {ps, holdMs}, kept apart from its timer
+     handle so a hidden tab can park it and hand it back in full — see the
+     visibilitychange handler */
+  var handoff = null;
   /* the round's reported result, banked the moment the second pose is
      rated — finishRound() is presentation only (see the star handler) */
   var roundResult = null;
@@ -587,9 +591,19 @@
 
   function newRound() {
     clearTimeout(starTimer);
+    starTimer = null;
+    handoff = null;
     stopLoop();
-    /* a round whose second pose was rated but whose 380ms hand-off is
-       still pending was already banked at that click — nothing to flush */
+    /* A round whose second pose is already rated and banked, but whose
+       hand-off beat has not run yet, still has its whole closing screen
+       pending: the two fits side by side, the round's coaching line and
+       the new-best toast. report() had happened, so nothing was
+       double-counted — but an impatient press inside that window (380ms
+       after a rating, 1.8s after an empty pose) simply deleted the
+       player's result screen, which is the one thing every sibling drill
+       flushes here. `state !== 'done'` keeps a round that already closed
+       normally from replaying its toast. */
+    if (roundResult && state !== 'done') finishRound();
     round += 1;
     poseIdx = 0;
     poseScores = [];
@@ -688,18 +702,28 @@
       hudScore.textContent = String(roundResult.score);
       hudBest.textContent = roundResult.best === null ? '–' : String(roundResult.best);
     }
+    handoff = { ps: ps, holdMs: holdMs };
+    armHandoff();
+  }
+
+  function armHandoff() {
+    if (!handoff) return;
     clearTimeout(starTimer);
     starTimer = setTimeout(function () {
+      starTimer = null;
+      var h = handoff;
+      handoff = null;
+      if (!h) return;
       ratePanel.hidden = true;
       litTo(0);
       if (poseIdx === 0) {
-        showToast('pose 1 — ' + Math.round(ps), false);
+        showToast('pose 1 — ' + Math.round(h.ps), false);
         poseIdx = 1;
         startPose();
       } else {
         finishRound();
       }
-    }, holdMs);
+    }, handoff.holdMs);
   }
 
   /* ---- stars ---- */
@@ -1151,6 +1175,25 @@
   /* Hardware swapped mid-session — the eased floors are read at scoring
      time, so the sheet just needs a repaint. */
   ArtDaily.onInput(function () { draw(); });
+
+  /* setTimeout keeps firing while the page is hidden, so a notification or
+     an app switch during the hand-off beat used to run it off-screen. That
+     costs more here than a missed animation: after pose 1 the beat STARTS
+     POSE 2, whose 20-second clock then ran down on a page nobody was
+     looking at, and after an empty pose the beat is holding the 1.8s look
+     at the true line of action the player just missed — the only reason
+     that path exists. Park it and hand it back in full.
+
+     Nothing can be lost by parking it: advancePose() reports a finished
+     round synchronously the moment the second pose is banked, so this beat
+     only ever starts a POSE or plays the closing screen. */
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      if (starTimer !== null) { clearTimeout(starTimer); starTimer = null; }
+      return;
+    }
+    if (handoff && starTimer === null) armHandoff();
+  });
 
   /* Height tracks width, so a resize is a uniform rescale — the pose,
      the strokes and the clock all survive it. */
