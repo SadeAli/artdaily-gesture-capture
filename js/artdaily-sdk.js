@@ -391,9 +391,35 @@ window.ArtDaily = (function () {
     if (announced) bar.removeAttribute('role');
     announced = true;
     if (delivered) {
+      /* The rule the paint below already obeys, finally applied to the ONE
+         branch that still broke it: removing the focused element drops focus
+         to <body>. This paint destroys the link on purpose — the receipt says
+         the score is home, so there is nothing left to click — but it is
+         fired by the OPENER'S REPLY, an event the player did not cause and
+         cannot see coming, and focus really can be sitting on that link when
+         it lands: a drill that cancels its canvas pointerdown (the template
+         does, and so does anything built from it) never blurs a control a
+         keyboard player tabbed onto, so they can play a whole round still
+         standing on that link.
+         They were dropped to the top of the document, mid-round, by a
+         message from another tab.
+         The link cannot be kept, so focus is HANDED somewhere sensible
+         instead of dropped: the bar itself, which is the element whose text
+         just changed, so what a screen reader announces on landing is "sent
+         to your Art Daily record" — the answer to "where did my link go".
+         tabIndex -1 makes it focusable without adding a tab stop, and the
+         next Tab carries on from here rather than from the page top. Moved
+         only when focus was already inside the bar; taking it from anywhere
+         else would be its own bug. Guarded because this runs inside
+         report(), where a throw would cost the round its score. */
+      var refocus = false;
+      try { refocus = bar.contains(document.activeElement); } catch (e) {}
       bar.textContent = '';
       bar.appendChild(document.createTextNode('sent to your Art Daily record '));
       bar.appendChild(glyph('✓'));
+      if (refocus) {
+        try { bar.tabIndex = -1; bar.focus(); } catch (e) {}
+      }
       return;
     }
     /* The LINK NODE IS REUSED across rounds. Rebuilding the whole bar every
